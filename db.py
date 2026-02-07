@@ -3,9 +3,12 @@ WhaleMind MCP - Database connection module.
 
 Handles PostgreSQL connection and basic setup.
 Uses python-dotenv for DATABASE_URL from .env.
+Railway/Render: supports sslmode=require for cloud PostgreSQL.
 """
 
 import os
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from dotenv import load_dotenv
@@ -15,7 +18,7 @@ from config import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
-# Connection URL from environment (e.g. postgresql://user:pass@localhost:5432/whalemind)
+# Connection URL from environment (e.g. postgresql://user:pass@host:port/db)
 _raw_url = os.getenv("DATABASE_URL")
 
 # Only use if it looks like a real PostgreSQL URL (avoids "invalid connection option" when
@@ -25,21 +28,40 @@ if _raw_url and isinstance(_raw_url, str) and _raw_url.strip().lower().startswit
     DATABASE_URL = _raw_url.strip()
 
 
-def get_connection():
+def _ensure_ssl_url(url: str) -> str:
+    """Add sslmode=require for cloud DBs (Railway, Render). Required for non-localhost."""
+    if not url or "localhost" in url.lower() or "127.0.0.1" in url:
+        return url
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "sslmode" not in qs:
+        qs["sslmode"] = ["require"]
+    new_query = urlencode(qs, doseq=True)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+
+
+def get_db_connection():
     """
-    Open a new database connection.
+    Open a new database connection. Reusable DB connection helper.
+    Supports Railway PostgreSQL: sslmode=require, no hardcoded credentials.
     Returns a connection object, or None if DATABASE_URL is missing/invalid or connection fails.
     """
     if not DATABASE_URL:
         return None
+    url = _ensure_ssl_url(DATABASE_URL)
     try:
-        return psycopg2.connect(DATABASE_URL)
+        return psycopg2.connect(url)
     except psycopg2.OperationalError as e:
         logger.warning("Could not connect to PostgreSQL: %s. API will run without DB.", e)
         return None
     except psycopg2.ProgrammingError as e:
         logger.warning("Invalid DATABASE_URL: %s. Use postgresql://user:password@host:port/db", e)
         return None
+
+
+def get_connection():
+    """Alias for get_db_connection(). Kept for backward compatibility."""
+    return get_db_connection()
 
 
 def get_cursor(connection, dict_cursor=True):
@@ -57,7 +79,7 @@ def init_db():
     Create tables if they don't exist.
     Call this once when setting up the project or on first run.
     """
-    conn = get_connection()
+    conn = get_db_connection()
     if not conn:
         if not DATABASE_URL:
             logger.warning("DATABASE_URL not set. Skipping DB init.")
@@ -116,6 +138,14 @@ def init_db():
                 last_updated TIMESTAMPTZ DEFAULT NOW()
             );
             """)
+            # wallet_cache: simple cache for analyze results (Railway-friendly)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS wallet_cache (
+                address TEXT PRIMARY KEY,
+                data JSONB,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
         conn.commit()
         logger.info("DB init: tables created or already exist.")
     except (psycopg2.Error, Exception) as e:
@@ -138,7 +168,7 @@ def _with_connection(callback):
         return None
     conn = None
     try:
-        conn = get_connection()
+        conn = get_db_connection()
         if not conn:
             return None
         out = callback(conn)
@@ -188,7 +218,7 @@ def get_wallet_intelligence_cache(address: str, max_age_seconds: int | None = No
         return None
     conn = None
     try:
-        conn = get_connection()
+        conn = get_db_connection()
         if not conn:
             return None
         with get_cursor(conn) as cur:
@@ -241,4 +271,57 @@ def save_wallet_intelligence_cache(
         return _with_connection(_do) is True
     except Exception as e:
         logger.warning("save_wallet_intelligence_cache failed for %s: %s", address, e)
+        return False
+
+
+def get_wallet_cache(address: str, max_age_hours: int = 24) -> dict | None:
+    """
+    Return cached JSON from wallet_cache if address exists and updated_at within max_age_hours.
+    Returns the 'data' column as dict, or None on miss/stale.
+    """
+    if not DATABASE_URL:
+        return None
+    conn = None
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return None
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT data, updated_at FROM wallet_cache
+                WHERE address = %s AND updated_at > NOW() - INTERVAL '1 hour' * %s
+                """,
+                (address, max_age_hours),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return row["data"]
+    except (psycopg2.Error, Exception) as e:
+        logger.debug("get_wallet_cache failed for %s: %s", address, e)
+        return None
+    finally:
+        close_connection(conn)
+
+
+def save_wallet_cache(address: str, data: dict) -> bool:
+    """UPSERT wallet_cache row. Stores full JSON in data column. Returns True on success."""
+    def _do(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO wallet_cache (address, data, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (address) DO UPDATE SET
+                    data = EXCLUDED.data,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (address, Json(data)),
+            )
+        return True
+    try:
+        return _with_connection(_do) is True
+    except Exception as e:
+        logger.warning("save_wallet_cache failed for %s: %s", address, e)
         return False

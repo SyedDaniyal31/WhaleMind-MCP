@@ -4,6 +4,7 @@ WhaleMind MCP - Flask API server.
 Production-oriented: timeouts, validation, caching, consistent error JSON.
 Endpoints:
   GET  /health           - Health check
+  GET  /db-test          - Test DB connection (SELECT 1)
   POST /analyze          - Analyze wallet behavior (fetch → analyze → save → return verdict)
   GET  /wallet/<address> - Fetch data and behavior for a wallet
   GET  /wallet/<address>/balance - Balance only
@@ -113,7 +114,15 @@ def _row_to_ai_response(row: dict) -> dict:
 
 
 def _get_cached_analyze(wallet):
-    """Return cached analyze result: DB first, then in-memory. None on miss."""
+    """Return cached analyze result: wallet_cache (24h) first, then wallet_intelligence, then in-memory. None on miss."""
+    # 1) wallet_cache (primary, 24h TTL)
+    try:
+        cached = db.get_wallet_cache(wallet, max_age_hours=24)
+        if cached and isinstance(cached, dict):
+            return cached
+    except Exception as e:
+        logger.warning("wallet_cache lookup failed for %s: %s", wallet, e)
+    # 2) wallet_intelligence (short TTL)
     try:
         row = db.get_wallet_intelligence_cache(wallet, max_age_seconds=ANALYZE_CACHE_TTL)
     except Exception as e:
@@ -121,6 +130,7 @@ def _get_cached_analyze(wallet):
         row = None
     if row:
         return _row_to_ai_response(row)
+    # 3) in-memory
     key = wallet.lower()
     entry = _analyze_cache.get(key)
     if not entry or (time.time() - entry["cached_at"] > ANALYZE_CACHE_TTL):
@@ -131,8 +141,12 @@ def _get_cached_analyze(wallet):
 
 
 def _set_cached_analyze(wallet, ai_response: dict, metrics_used: dict | None = None):
-    """Store result in DB and in-memory cache. In-memory always updated."""
+    """Store result in wallet_cache (primary), wallet_intelligence, and in-memory cache."""
     _analyze_cache[wallet.lower()] = {"result": ai_response, "cached_at": time.time()}
+    try:
+        db.save_wallet_cache(wallet, ai_response)
+    except Exception as e:
+        logger.warning("wallet_cache save failed for %s: %s", wallet, e)
     try:
         db.save_wallet_intelligence_cache(
             address=ai_response["address"],
@@ -228,6 +242,26 @@ def _persist_wallet_transactions(conn, address: str, transactions: list, limit: 
 def health():
     """Health check: returns 200 and status."""
     return jsonify({"status": "ok", "service": "WhaleMind MCP"})
+
+
+@app.route("/db-test", methods=["GET"])
+def db_test():
+    """Connect to DB, run SELECT 1, return JSON success message. For Railway DB verification."""
+    conn = None
+    try:
+        conn = db.get_db_connection()
+        if not conn:
+            return jsonify({"status": "error", "message": "DATABASE_URL not set or invalid"}), 503
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return jsonify({"status": "ok", "message": "Database connection successful"})
+    except Exception as e:
+        logger.warning("db-test failed: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 503
+    finally:
+        if conn:
+            db.close_connection(conn)
 
 
 @app.route("/analyze", methods=["POST"])
@@ -341,7 +375,7 @@ def wallet_analysis(address):
     # Analyze behavior
     behavior_result = behavior.summarize_behavior(transactions, wallet_address=address)
 
-    conn = db.get_connection()
+    conn = db.get_db_connection()
     if conn:
         try:
             _persist_wallet_transactions(conn, address, transactions, limit)
