@@ -6,3 +6,4 @@ venv/
 .idea/
 .vscode/
 wallets.txt
+node_modules/
