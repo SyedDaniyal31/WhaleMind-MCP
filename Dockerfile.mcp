@@ -8,6 +8,7 @@ COPY mcp-server-js/package.json mcp-server-js/package-lock.json* ./
 RUN npm ci --omit=dev
 
 COPY mcp-server-js/src ./src
+COPY mcp-server-js/server.js ./
 
 EXPOSE 3000
 ENV NODE_ENV=production
