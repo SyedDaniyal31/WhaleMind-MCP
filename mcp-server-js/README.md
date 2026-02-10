@@ -70,11 +70,13 @@ npm start
 
 ### If you see "npm: command not found" in deploy logs
 
-The service is building from the **repo root** (Flask/Python) instead of this folder. Fix:
+The service is building from the **repo root** (Flask/Python), so the container has no Node. Fix in Railway:
 
-- Open the **web** (or this) service → **Settings** → **General**.
-- Set **Root Directory** to exactly: `mcp-server-js`.
-- Save and **Redeploy**. Railway will then build from this directory, use the Dockerfile (Node 20), and `node server.js` will run correctly.
+1. **Settings** → **Root Directory** → set to exactly: **`mcp-server-js`** (no leading slash).
+2. **Settings** → **Start Command** → set to: **`node server.js`** (so it never runs `npm`).
+3. **Redeploy**.
+
+See **[RAILWAY-DEPLOY.md](./RAILWAY-DEPLOY.md)** for step-by-step.
 
 ## Test tools/list
 
