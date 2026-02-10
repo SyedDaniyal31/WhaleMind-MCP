@@ -460,8 +460,22 @@ console.log("Server booting...");
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/", (_req, res) => res.send("MCP server running"));
+// ---- Routes (GET for browser, POST /mcp for MCP) ----
+app.get("/", (_req, res) => res.send("Server running"));
 app.get("/health", (_req, res) => res.send("OK"));
+
+app.get("/analyze", (_req, res) => {
+  res.json({ status: "ok", route: "analyze", message: "Use POST /mcp with MCP tools (e.g. whale_intel_report) for wallet analysis." });
+});
+
+app.get("/wallet/:address", (req, res) => {
+  res.json({
+    status: "ok",
+    route: "wallet",
+    address: req.params.address,
+    message: "Use POST /mcp with whale_intel_report or whale_risk_snapshot for wallet data.",
+  });
+});
 
 app.post("/mcp", statelessHandler(createMcpServer, {
   onError: (err) => console.error("MCP error:", err),
@@ -483,9 +497,19 @@ app.use((err, req, res, next) => {
   res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null });
 });
 
+const routes = [
+  "GET  /",
+  "GET  /health",
+  "GET  /analyze",
+  "GET  /wallet/:address",
+  "POST /mcp (MCP JSON-RPC)",
+];
+
 app.listen(PORT, HOST, () => {
   console.log("Server ready");
   console.log(`Server running on ${HOST}:${PORT}`);
+  console.log("Registered routes:");
+  routes.forEach((r) => console.log("  " + r));
   if (!ETHERSCAN_API_KEY) console.warn("  ETHERSCAN_API_KEY not set");
   if (!WHALEMIND_API_URL) console.warn("  WHALEMIND_API_URL not set (optional)");
 });
