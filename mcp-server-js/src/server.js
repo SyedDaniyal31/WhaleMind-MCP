@@ -1,5 +1,6 @@
 /**
- * WhaleMind MCP Server — Fast boot for Railway. No DB/API calls before listen; lazy work in routes.
+ * WhaleMind MCP Server — Official MCP SDK only. No custom JSON-RPC.
+ * All protocol handling: @modelcontextprotocol/sdk (Streamable HTTP at /mcp).
  */
 import "./loadEnv.js";
 import express from "express";
@@ -517,9 +518,13 @@ console.log("Server booting...");
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// ---- Routes (GET for browser, POST /mcp for MCP) ----
+// ---- Routes: only /health and /mcp are required for Context; rest are informational ----
 app.get("/", (_req, res) => res.send("Server running"));
-app.get("/health", (_req, res) => res.send("OK"));
+
+// Context Protocol: health check must return 200 OK.
+app.get("/health", (_req, res) => {
+  res.status(200).send("OK");
+});
 
 app.get("/analyze", (_req, res) => {
   res.json({ status: "ok", route: "analyze", message: "Use POST /mcp with MCP tools (e.g. whale_intel_report) for wallet analysis." });
@@ -534,17 +539,18 @@ app.get("/wallet/:address", (req, res) => {
   });
 });
 
-// MCP mounted at /mcp exactly (Context Protocol + Blocknative-style). GET = info, POST = JSON-RPC.
+// ---- MCP at /mcp: 100% handled by @modelcontextprotocol/sdk (no custom JSON-RPC) ----
+// GET: plain text only so Context never treats it as protocol. POST: delegated to SDK transport.
 async function mcpHandler(req, res, next) {
   if (req.method === "GET") {
-    return res.json({
-      jsonrpc: "2.0",
-      message: "MCP endpoint: use POST with JSON-RPC body. Methods: initialize, tools/list, tools/call.",
-      hint: "Clients (Context, Claude, etc.) send POST requests; browser GET shows this info.",
-    });
+    res.set("Allow", "POST");
+    return res.type("text/plain").status(200).send(
+      "MCP endpoint: use POST with JSON-RPC body. Methods: initialize, tools/list, tools/call."
+    );
   }
   if (req.method !== "POST") {
-    return res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null });
+    res.set("Allow", "POST");
+    return res.type("text/plain").status(405).send("Method not allowed. Use POST.");
   }
   let transport;
   let server;
@@ -565,7 +571,7 @@ async function mcpHandler(req, res, next) {
     if (server) server.close();
     console.error("MCP error:", error);
     if (!res.headersSent) {
-      res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
+      res.type("text/plain").status(500).send("Internal server error");
     }
     next(error);
   }
@@ -574,18 +580,11 @@ app.use("/mcp", mcpHandler);
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.message?.includes("JSON")) {
-    res.setHeader("Content-Type", "application/json");
-    res.status(200).end(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: { code: -32700, message: "Parse error: invalid JSON in request body" },
-        id: null,
-      })
-    );
+    res.type("text/plain").status(400).send("Parse error: invalid JSON in request body");
     return;
   }
   console.error("Unhandled error:", err);
-  res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null });
+  if (!res.headersSent) res.type("text/plain").status(500).send("Internal error");
 });
 
 const routes = [
