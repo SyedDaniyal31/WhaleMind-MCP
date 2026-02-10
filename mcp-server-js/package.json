@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "MCP server for wallet analysis — Context marketplace compatible",
   "type": "module",
-  "main": "server.js",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
   },
   "engines": {
     "node": ">=18"

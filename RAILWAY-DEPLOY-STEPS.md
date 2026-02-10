@@ -30,8 +30,8 @@ Use the root Dockerfile so you **don’t** change Root Directory.
 ### Step 3: Start command (optional but recommended)
 
 1. In the same **Settings**, find **Deploy** (or **Start Command**).
-2. Set **Start Command** to: **`node server.js`**  
-   - Or leave blank; `Dockerfile.mcp` already uses `CMD ["node", "server.js"]`.
+2. Set **Start Command** to: **`node src/server.js`**  
+   - Or leave blank; `Dockerfile.mcp` already uses `CMD ["node", "src/server.js"]`.
 
 ### Step 4: Variables (optional)
 
@@ -79,7 +79,7 @@ Same as Method 1 — **New Project** → **Deploy from GitHub** → select **Wha
 
 ### Step 3: Start command
 
-1. In **Settings** → **Deploy**, set **Start Command** to: **`node server.js`** (or leave blank to use the Dockerfile `CMD`).
+1. In **Settings** → **Deploy**, set **Start Command** to: **`node src/server.js`** (or leave blank to use the Dockerfile `CMD`).
 
 ### Step 4: Variables and domain
 
@@ -97,7 +97,7 @@ Same as Method 1 — **Deployments** → wait for success, then test `/`, `/heal
   - The **Dockerfile** expects `package.json` in the current directory (e.g. `mcp-server-js/Dockerfile`), but
   - The **build context** is the **repo root**, where there is no `package.json` (only in `mcp-server-js/`).
 - **Fix:**  
-  - **Method 1:** Build from repo root and use **Dockerfile path = `Dockerfile.mcp`** (it copies `mcp-server-js/package.json` and `mcp-server-js/server.js`).  
+  - **Method 1:** Build from repo root and use **Dockerfile path = `Dockerfile.mcp`** (it copies `mcp-server-js/package.json` and `mcp-server-js/src/`).  
   - **Method 2:** Set **Root Directory = `mcp-server-js`** so the context is that folder and `COPY package.json` finds the file.
 
 ---
@@ -122,7 +122,7 @@ If the deployment is green but `https://your-app.up.railway.app/` or `/health` t
 ### 3. Only one service should use the MCP Dockerfile
 
 - If you have **two services** (e.g. one Flask, one MCP), the domain must point to the **MCP** service.
-- The MCP service must use **Dockerfile path = `Dockerfile.mcp`** (or Root Directory = `mcp-server-js`) and **Start command = `node server.js`**.
+- The MCP service must use **Dockerfile path = `Dockerfile.mcp`** (or Root Directory = `mcp-server-js`) and **Start command = `node src/server.js`**.
 - The other service (Flask) uses a different build and a different URL.
 
 ### 4. Cold start (free tier)
@@ -145,7 +145,7 @@ If the deployment is green but `https://your-app.up.railway.app/` or `/health` t
 |------|------------------|----------------------|
 | Root Directory | **Empty** (or `.`) | **`mcp-server-js`** |
 | Dockerfile Path | **`Dockerfile.mcp`** | *(leave default)* |
-| Start Command | `node server.js` (optional) | `node server.js` (optional) |
+| Start Command | `node src/server.js` (optional) | `node src/server.js` (optional) |
 | Variables | ETHERSCAN_API_KEY, WHALEMIND_API_URL | Same |
 | Generate Domain | Yes | Yes |
 

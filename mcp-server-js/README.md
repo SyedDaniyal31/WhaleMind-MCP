@@ -1,93 +1,107 @@
-# WhaleMind MCP Server (Node.js)
+# WhaleMind MCP Server
 
-Giga-brained MCP tools for whale/smart-money intelligence. Combines Etherscan + optional WhaleMind API, adds risk/copy-trade signals and multi-wallet comparison. Context marketplace–compatible.
+An MCP server that provides whale and smart-money intelligence for Ethereum wallets, powered by Etherscan and an optional WhaleMind API. Context Protocol and Blocknative-style compliant.
 
-## Endpoints
+![Node Version](https://img.shields.io/badge/node-18+-green)
+![Status](https://img.shields.io/badge/status-active-brightgreen.svg)
 
-| Method | Path    | Description |
-|--------|---------|-------------|
-| GET    | /health | Health check → `{ "status": "ok" }` |
-| POST   | /mcp    | MCP JSON-RPC (initialize, tools/list, tools/call) |
+## Features
 
-## Tools (marketplace-competitive)
+- **Tools**:
+  - `whale_intel_report`: Deep intelligence report for one Ethereum wallet. Returns risk level, copy-trade signal, transaction metrics, balance, and agent summary. Use for due diligence or “should I copy this whale?” decisions.
+  - `compare_whales`: Compare 2–5 wallets and rank by smart-money score. Returns ranking, best_for_copy_trading, and comparison summary.
+  - `whale_risk_snapshot`: Quick risk and copy-trade signal for one wallet. Returns risk_level, copy_trade_signal, one_line_rationale, and agent_summary.
+- **Transport**: Streamable HTTP at `/mcp` (GET = info, POST = JSON-RPC). Compatible with Context Protocol, Claude, and other MCP clients.
+- **Optional API Keys**: Works with Etherscan (optional key for higher rate limits) and optional WhaleMind API URL for verdict/confidence and balance.
 
-### 1. `whale_intel_report`
-**Deep due-diligence for one wallet.**  
-- **Input:** `address`, `limit` (optional, default 50)  
-- **Behavior:** Fetches Etherscan txs; optionally calls WhaleMind POST /analyze and GET /wallet/balance when `WHALEMIND_API_URL` is set.  
-- **Output:** `verdict`, `confidence`, `entity_type`, `summary` (if API set), `risk_level`, `copy_trade_signal`, `total_txs`, `total_in_eth`, `total_out_eth`, `unique_counterparties`, `balance_wei`, `agent_summary`, timestamps.  
-- **Use when:** Full report or “should I copy this whale?” with balance.
+## Prerequisites
 
-### 2. `compare_whales`
-**Compare 2–5 wallets, rank by smart-money score.**  
-- **Input:** `addresses` (array of 2–5 Ethereum addresses)  
-- **Output:** `wallets` (with verdict, smart_money_score, copy_trade_signal, total_txs), `ranking`, `best_for_copy_trading`, `comparison_summary`.  
-- **Use when:** User wants to choose the best whale to copy or compare several addresses.
+- **Node.js**: Version 18 or later
+- **Etherscan API Key** (optional): For higher rate limits. Get one at [Etherscan](https://etherscan.io/apis).
+- **WhaleMind API URL** (optional): When set, tools use your WhaleMind API for verdict, confidence, and balance.
 
-### 3. `whale_risk_snapshot`
-**Quick copy-trade signal for one wallet.**  
-- **Input:** `address`  
-- **Output:** `risk_level`, `copy_trade_signal`, `one_line_rationale`, `verdict`/`confidence` (if API), `agent_summary`.  
-- **Use when:** Fast “should I copy this?” without full report.
+## Installation
 
-## Setup
+1. **Clone the repository** (or use the `mcp-server-js` folder):
 
-```bash
-cd mcp-server-js
-npm install
-cp .env.example .env
-# Set ETHERSCAN_API_KEY in .env (optional but recommended)
-```
+   ```bash
+   cd mcp-server-js
+   ```
 
-## Run
+2. **Install dependencies**:
 
-```bash
-npm start
-# or Railway: Procfile runs "node server.js"
-```
+   ```bash
+   npm install
+   ```
 
-## Env
+3. **Set environment variables** (optional):
 
-- **PORT** — Server port (default 3000; Railway sets this)
-- **HOST** — Bind address (default `0.0.0.0` for Railway)
-- **ETHERSCAN_API_KEY** — Optional; improves Etherscan rate limits
-- **WHALEMIND_API_URL** or **WHalemind_API_URL** — Optional; when set, tools call your WhaleMind API for verdict/confidence/entity_type and balance (e.g. `https://whalemind-mcp.up.railway.app`). Without it, signals are derived from on-chain metrics only.
+   ```bash
+   cp .env.example .env
+   # Edit .env: ETHERSCAN_API_KEY, WHALEMIND_API_URL (optional)
+   ```
 
-## Deploy to Railway
+## Usage
 
-1. In [Railway](https://railway.app): **New Project** → **Deploy from GitHub** → select this repo.
-2. **Service settings** → set **Root Directory** to `mcp-server-js` (required — see below).
-3. **Variables**: add
-   - `ETHERSCAN_API_KEY` — your Etherscan API key (recommended)
-   - `WHALEMIND_API_URL` — your Flask API URL (e.g. `https://whalemind-mcp.up.railway.app`)
-4. **Deploy**. Railway will use the `Dockerfile` here (Node 20 image); start is `node server.js`.
-5. **Settings** → **Networking** → **Generate Domain** to get a URL like `https://your-service.up.railway.app`.
+The server provides three tools, accessible via the MCP Streamable HTTP transport. You can run it locally, deploy to Railway, or register with Context Protocol.
 
-**MCP endpoint for Context / clients:**  
-`https://your-service.up.railway.app/mcp`
+### Running the server
 
-- Health: `GET https://your-service.up.railway.app/health` → `{ "status": "ok" }`
+1. **Development (with file watch)**:
 
-### If you see "npm: command not found" in deploy logs
+   ```bash
+   npm run dev
+   ```
 
-The service is building from the **repo root** (Flask/Python), so the container has no Node. Fix in Railway:
+2. **Production**:
 
-1. **Settings** → **Root Directory** → set to exactly: **`mcp-server-js`** (no leading slash).
-2. **Settings** → **Start Command** → set to: **`node server.js`** (so it never runs `npm`).
-3. **Redeploy**.
+   ```bash
+   npm start
+   ```
 
-See **[RAILWAY-DEPLOY.md](./RAILWAY-DEPLOY.md)** for step-by-step.
+   Server listens on `http://0.0.0.0:3000`. Health check: `GET /health` → `OK`. MCP endpoint: `POST /mcp`.
 
-## Test tools/list
+3. **Deploy to Railway** (Context / production):
 
-**PowerShell (recommended):**
+   - New Project → Deploy from GitHub → select repo.
+   - Set **Root Directory** to `mcp-server-js`.
+   - Variables: `ETHERSCAN_API_KEY`, `WHALEMIND_API_URL` (optional).
+   - MCP URL: `https://your-app.up.railway.app/mcp`
+
+   See [RAILWAY-DEPLOY.md](./RAILWAY-DEPLOY.md) for step-by-step.
+
+### Tools
+
+- **`whale_intel_report(address: string, limit?: number)`**  
+  Full report for one wallet. Returns verdict (if WhaleMind API set), risk_level, copy_trade_signal, total_txs, total_in_eth, total_out_eth, unique_counterparties, balance_wei, agent_summary, and optional timestamps.
+
+- **`compare_whales(addresses: string[])`**  
+  Compare 2–5 addresses. Returns wallets (with verdict, smart_money_score, copy_trade_signal, total_txs), ranking, best_for_copy_trading, and comparison_summary.
+
+- **`whale_risk_snapshot(address: string)`**  
+  Quick signal for one wallet. Returns risk_level, copy_trade_signal, one_line_rationale, and agent_summary.
+
+### Test tools/list (PowerShell)
+
 ```powershell
 Invoke-RestMethod -Uri http://localhost:3000/mcp -Method POST -ContentType "application/json" -Headers @{ Accept = "application/json, text/event-stream" } -Body '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
-Response is SSE; the tool list is in the `data` payload. MCP clients parse this automatically.
 
-**curl.exe from PowerShell** (use a variable so the JSON isn’t mangled):
-```powershell
-$body = '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-curl.exe -s -X POST http://localhost:3000/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d $body
+## Project structure (Blocknative-style)
+
 ```
+mcp-server-js/
+├── src/
+│   ├── server.js      # MCP server + Express app
+│   └── loadEnv.js     # Optional .env loading (dev only)
+├── .env.example
+├── package.json
+├── Dockerfile
+├── Procfile
+├── railway.toml
+└── README.md
+```
+
+## License
+
+Same license as the parent WhaleMind MCP project.

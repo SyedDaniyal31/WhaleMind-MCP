@@ -7,9 +7,9 @@ WORKDIR /app
 COPY mcp-server-js/package.json mcp-server-js/package-lock.json* ./
 RUN npm ci --omit=dev
 
-COPY mcp-server-js/loadEnv.js mcp-server-js/server.js ./
+COPY mcp-server-js/src ./src
 
 EXPOSE 3000
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
-CMD ["node", "server.js"]
+CMD ["node", "src/server.js"]
