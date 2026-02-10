@@ -1,0 +1,21 @@
+{
+  "name": "whalemind-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for wallet analysis — Context marketplace compatible",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-mcp-handler": "^0.3.0",
+    "zod": "^3.23.0"
+  }
+}
