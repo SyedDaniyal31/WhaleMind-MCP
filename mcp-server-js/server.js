@@ -204,8 +204,68 @@ function oneLineRationale(verdict, confidence, risk_level, copy_trade_signal) {
 }
 
 // ---------------------------------------------------------------------------
-// MCP server: three giga-brained tools
+// MCP server: schema-compliant responses for Context Protocol
 // ---------------------------------------------------------------------------
+
+function ensureArray(val) {
+  return Array.isArray(val) ? val : [];
+}
+
+function whaleIntelReportSchema(overrides = {}) {
+  const base = {
+    address: "",
+    risk_level: "MEDIUM",
+    copy_trade_signal: "NEUTRAL",
+    total_txs: 0,
+    total_in_eth: 0,
+    total_out_eth: 0,
+    unique_counterparties: 0,
+    agent_summary: "",
+  };
+  const out = { ...base, ...overrides };
+  Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
+  return out;
+}
+
+function compareWhalesSchema(overrides = {}) {
+  return {
+    wallets: ensureArray(overrides.wallets),
+    ranking: ensureArray(overrides.ranking),
+    best_for_copy_trading: overrides.best_for_copy_trading ?? null,
+    comparison_summary: overrides.comparison_summary ?? "",
+    ...(overrides.error != null && { error: overrides.error }),
+  };
+}
+
+function whaleRiskSnapshotSchema(overrides = {}) {
+  const base = {
+    address: "",
+    risk_level: "MEDIUM",
+    copy_trade_signal: "NEUTRAL",
+    one_line_rationale: "",
+    agent_summary: "",
+  };
+  const out = { ...base, ...overrides };
+  Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
+  return out;
+}
+
+function errorResult(message, schemaType = "whale_intel_report", context = {}) {
+  let structured;
+  if (schemaType === "whale_intel_report") {
+    structured = whaleIntelReportSchema({ address: context.address ?? "", error: message });
+  } else if (schemaType === "compare_whales") {
+    structured = compareWhalesSchema({ comparison_summary: "", error: message });
+  } else if (schemaType === "whale_risk_snapshot") {
+    structured = whaleRiskSnapshotSchema({ address: context.address ?? "", error: message });
+  } else {
+    structured = whaleIntelReportSchema({ error: message });
+  }
+  return {
+    content: [{ type: "text", text: message }],
+    structuredContent: structured,
+  };
+}
 
 function createMcpServer() {
   const server = new McpServer({
@@ -246,20 +306,12 @@ function createMcpServer() {
     },
     async ({ address, limit = 50 }) => {
       const addr = (address || "").trim();
-      const base = {
-        address: addr,
-        risk_level: "MEDIUM",
-        copy_trade_signal: "NEUTRAL",
-        total_txs: 0,
-        total_in_eth: 0,
-        total_out_eth: 0,
-        unique_counterparties: 0,
-        agent_summary: "",
-      };
+      const base = whaleIntelReportSchema({ address: addr });
       if (!addr || !addr.startsWith("0x")) {
+        const structured = whaleIntelReportSchema({ address: addr, error: "Invalid address" });
         return {
-          content: [{ type: "text", text: JSON.stringify({ ...base, error: "Invalid address" }) }],
-          structuredContent: { ...base, error: "Invalid address" },
+          content: [{ type: "text", text: JSON.stringify({ ...structured }) }],
+          structuredContent: structured,
         };
       }
       try {
@@ -275,33 +327,30 @@ function createMcpServer() {
         const agentSummary =
           `Whale ${addr.slice(0, 10)}…: ${verdict || "on-chain only"}. ${interpretation.copy_trade_signal}. ` +
           (analyzeRes?.summary ? analyzeRes.summary.slice(0, 100) + "…" : `${metrics.total_txs} txs, ${metrics.unique_counterparties} counterparties.`);
-        const data = {
+        const data = whaleIntelReportSchema({
           address: addr,
-          ...(verdict != null && { verdict }),
-          ...(typeof confidence === "number" && { confidence }),
-          ...(analyzeRes?.entity_type && { entity_type: analyzeRes.entity_type }),
-          ...(analyzeRes?.summary && { summary: analyzeRes.summary }),
           risk_level: interpretation.risk_level,
           copy_trade_signal: interpretation.copy_trade_signal,
           total_txs: metrics.total_txs,
           total_in_eth: metrics.total_in_eth,
           total_out_eth: metrics.total_out_eth,
           unique_counterparties: metrics.unique_counterparties,
-          ...(balanceWei != null && { balance_wei: balanceWei }),
           agent_summary: agentSummary,
-          first_seen_iso: metrics.first_seen_iso,
-          last_seen_iso: metrics.last_seen_iso,
-        };
+          ...(verdict != null && { verdict }),
+          ...(typeof confidence === "number" && { confidence }),
+          ...(analyzeRes?.entity_type && { entity_type: analyzeRes.entity_type }),
+          ...(analyzeRes?.summary && { summary: analyzeRes.summary }),
+          ...(balanceWei != null && { balance_wei: balanceWei }),
+          ...(metrics.first_seen_iso != null && { first_seen_iso: metrics.first_seen_iso }),
+          ...(metrics.last_seen_iso != null && { last_seen_iso: metrics.last_seen_iso }),
+        });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: data,
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        return {
-          content: [{ type: "text", text: JSON.stringify({ ...base, error: msg }) }],
-          structuredContent: { ...base, error: msg },
-        };
+        return errorResult(msg, "whale_intel_report", { address: addr });
       }
     }
   );
@@ -332,10 +381,9 @@ function createMcpServer() {
       }),
     },
     async ({ addresses }) => {
-      const empty = { wallets: [], ranking: [], best_for_copy_trading: null, comparison_summary: "" };
       try {
         const results = await Promise.all(
-          addresses.map(async (addr) => {
+          (addresses ?? []).map(async (addr) => {
             const txs = await fetchTransactions(addr, 50);
             const metrics = analyzeTransactions(txs, addr);
             const analyzeRes = WHALEMIND_API_URL ? await fetchWhaleMindAnalyze(addr) : null;
@@ -352,7 +400,7 @@ function createMcpServer() {
             };
           })
         );
-        const byScore = [...results].sort((a, b) => b.smart_money_score - a.smart_money_score);
+        const byScore = [...(results ?? [])].sort((a, b) => b.smart_money_score - a.smart_money_score);
         const best =
           byScore[0]?.copy_trade_signal === "STRONG_BUY" || byScore[0]?.copy_trade_signal === "BUY"
             ? byScore[0].address
@@ -360,22 +408,19 @@ function createMcpServer() {
         const comparison_summary = best
           ? `Best for copy-trading: ${best.slice(0, 10)}… (score ${byScore[0]?.smart_money_score}).`
           : `Ranked by score: ${byScore.map((w) => `${w.address.slice(0, 8)}…=${w.smart_money_score}`).join(", ")}.`;
-        const data = {
-          wallets: results,
-          ranking: byScore.map((w) => w.address),
+        const data = compareWhalesSchema({
+          wallets: ensureArray(results),
+          ranking: ensureArray(byScore.map((w) => w.address)),
           best_for_copy_trading: best,
           comparison_summary,
-        };
+        });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: data,
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        return {
-          content: [{ type: "text", text: JSON.stringify({ ...empty, error: msg }) }],
-          structuredContent: { ...empty, error: msg },
-        };
+        return errorResult(msg, "compare_whales");
       }
     }
   );
@@ -403,17 +448,12 @@ function createMcpServer() {
     },
     async ({ address }) => {
       const addr = (address || "").trim();
-      const base = {
-        address: addr,
-        risk_level: "MEDIUM",
-        copy_trade_signal: "NEUTRAL",
-        one_line_rationale: "",
-        agent_summary: "",
-      };
+      const base = whaleRiskSnapshotSchema({ address: addr });
       if (!addr || !addr.startsWith("0x")) {
+        const structured = whaleRiskSnapshotSchema({ address: addr, error: "Invalid address" });
         return {
-          content: [{ type: "text", text: JSON.stringify({ ...base, error: "Invalid address" }) }],
-          structuredContent: { ...base, error: "Invalid address" },
+          content: [{ type: "text", text: "Invalid address" }],
+          structuredContent: structured,
         };
       }
       try {
@@ -426,25 +466,22 @@ function createMcpServer() {
         const confidence = analyzeRes?.confidence;
         const interp = verdict != null ? fromVerdict(verdict, confidence) : fromMetrics(metrics);
         const oneLine = oneLineRationale(verdict, confidence, interp.risk_level, interp.copy_trade_signal);
-        const data = {
+        const data = whaleRiskSnapshotSchema({
           address: addr,
           risk_level: interp.risk_level,
           copy_trade_signal: interp.copy_trade_signal,
-          ...(verdict != null && { verdict }),
-          ...(typeof confidence === "number" && { confidence }),
           one_line_rationale: oneLine,
           agent_summary: `${interp.copy_trade_signal}: ${addr.slice(0, 10)}… — ${oneLine}`,
-        };
+          ...(verdict != null && { verdict }),
+          ...(typeof confidence === "number" && { confidence }),
+        });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: data,
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        return {
-          content: [{ type: "text", text: JSON.stringify({ ...base, error: msg }) }],
-          structuredContent: { ...base, error: msg },
-        };
+        return errorResult(msg, "whale_risk_snapshot", { address: addr });
       }
     }
   );
