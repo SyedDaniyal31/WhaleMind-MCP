@@ -461,7 +461,8 @@ function createMcpServer() {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/health", (_req, res) => {
+// Root and /health for Railway healthcheck (passes on either path)
+app.get(["/", "/health"], (_req, res) => {
   res.json({ status: "ok" });
 });
 
