@@ -102,6 +102,43 @@ Same as Method 1 — **Deployments** → wait for success, then test `/`, `/heal
 
 ---
 
+## Deployment is active but the link times out (ERR_TIMED_OUT)
+
+If the deployment is green but `https://your-app.up.railway.app/` or `/health` times out in the browser:
+
+### 1. Confirm the domain is for this service
+
+- In Railway, open **Settings** → **Networking** (or the **Variables** / service overview).
+- Check which **service** the domain `whalemind-mcp-production.up.railway.app` is attached to (it’s listed under that service).
+- Open **that same service** (the one that owns the domain), then **Deployments** → latest **Deploy logs**. You must see logs for the app that serves that URL.
+
+### 2. Check deploy logs for the correct service
+
+- In the service that has the domain, open **Deploy logs** (not Build logs).
+- You should see: **`Listening on 0.0.0.0:XXXX (PORT=XXXX)`**.
+- If you don’t see that line, the process isn’t starting (crash on startup). Look for errors or stack traces above it.
+- If the logs keep repeating (restart loop), the app is crashing; fix the error shown in the logs.
+
+### 3. Only one service should use the MCP Dockerfile
+
+- If you have **two services** (e.g. one Flask, one MCP), the domain must point to the **MCP** service.
+- The MCP service must use **Dockerfile path = `Dockerfile.mcp`** (or Root Directory = `mcp-server-js`) and **Start command = `node server.js`**.
+- The other service (Flask) uses a different build and a different URL.
+
+### 4. Cold start (free tier)
+
+- On the free tier, the service can sleep. The first request after idle can take 30–60 seconds and may timeout in the browser.
+- Wait 1–2 minutes, then try again. Or use **Observability** → **Logs** and trigger a request; if you see "Listening on 0.0.0.0" and then request logs, the app is up and the timeout was likely cold start.
+
+### 5. Redeploy and test again
+
+- **Deployments** → **Redeploy** on the latest deployment.
+- After it’s active, open **Deploy logs** and confirm **`Listening on 0.0.0.0:...`**.
+- Then open `https://your-domain/health` in the browser or run:  
+  `Invoke-RestMethod -Uri "https://your-domain/health" -Method GET`
+
+---
+
 ## Quick checklist
 
 | Step | Method 1 (root) | Method 2 (subfolder) |
