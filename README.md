@@ -12,5 +12,6 @@ python api.py
 
 ## Deploy (Railway/Render)
 
-- Set `ETHERSCAN_API_KEY` and `DATABASE_URL` in environment
-- Procfile: `web: gunicorn api:app`
+**Flask API:** Set `ETHERSCAN_API_KEY` and `DATABASE_URL` in environment; Procfile: `web: gunicorn api:app`.
+
+**MCP server (Node):** Deploy from this repo with Railway → Settings → **Dockerfile path** = `Dockerfile.mcp`, **Start command** = `node server.js`. See [mcp-server-js/RAILWAY-DEPLOY.md](mcp-server-js/RAILWAY-DEPLOY.md).

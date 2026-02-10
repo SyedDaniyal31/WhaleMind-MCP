@@ -1,0 +1,15 @@
+# MCP server — use when deploying from repo root (no Root Directory change)
+# In Railway: Settings → Dockerfile path = Dockerfile.mcp, Start Command = node server.js
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY mcp-server-js/package.json mcp-server-js/package-lock.json* ./
+RUN npm ci --omit=dev
+
+COPY mcp-server-js/server.js ./
+
+EXPOSE 3000
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+CMD ["node", "server.js"]
