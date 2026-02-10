@@ -3,6 +3,7 @@ WhaleMind MCP - Flask API server.
 
 Production-oriented: timeouts, validation, caching, consistent error JSON.
 Endpoints:
+  GET  /                 - Service info (for browser / discovery)
   GET  /health           - Health check
   GET  /db-test          - Test DB connection (SELECT 1)
   POST /analyze          - Analyze wallet behavior (fetch → analyze → save → return verdict)
@@ -236,6 +237,17 @@ def _persist_wallet_transactions(conn, address: str, transactions: list, limit: 
                 """,
                 {**row, "ts": ts, "raw_data": Json(row.get("raw_data") or {})},
             )
+
+
+@app.route("/", methods=["GET"])
+def root():
+    """Root: info for browser or API discovery."""
+    base = request.url_root.rstrip("/")
+    return jsonify({
+        "service": "WhaleMind MCP",
+        "description": "Wallet and whale analysis API",
+        "docs": f"{base}/health (health), {base}/wallet/<address> (wallet data), POST {base}/analyze (analyze)",
+    })
 
 
 @app.route("/health", methods=["GET"])
