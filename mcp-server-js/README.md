@@ -1,9 +1,23 @@
 # WhaleMind MCP Server
 
-An MCP server that provides whale and smart-money intelligence for Ethereum wallets, powered by Etherscan and an optional WhaleMind API. Context Protocol and Blocknative-style compliant.
+A standard MCP server that provides whale and smart-money intelligence for Ethereum wallets. This example follows the [Context Protocol SDK Blocknative pattern](https://github.com/ctxprotocol/sdk/tree/main/examples/server/blocknative-contributor).
 
-![Node Version](https://img.shields.io/badge/node-18+-green)
-![Status](https://img.shields.io/badge/status-active-brightgreen.svg)
+> **Security**: Secured with Context Protocol request verification (`createContextMiddleware` from `@ctxprotocol/sdk`). Discovery (e.g. `tools/list`) is open; execution (`tools/call`) is protected.
+
+## What Makes This Context Protocol Compliant?
+
+Context requires `outputSchema` and `structuredContent` from the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#output-schema) for payment verification and dispute resolution.
+
+1. **`outputSchema`** in tool definitions — Defines the structure of response data (we use Zod; the MCP SDK converts to JSON Schema).
+2. **`structuredContent`** in responses — Machine-readable data that exactly matches the outputSchema.
+
+```javascript
+// Every tool returns (required by Context)
+return {
+  content: [{ type: "text", text: JSON.stringify(data) }],
+  structuredContent: data,  // must match outputSchema
+};
+```
 
 ## Features
 
@@ -11,8 +25,9 @@ An MCP server that provides whale and smart-money intelligence for Ethereum wall
   - `whale_intel_report`: Deep intelligence report for one Ethereum wallet. Returns risk level, copy-trade signal, transaction metrics, balance, and agent summary. Use for due diligence or “should I copy this whale?” decisions.
   - `compare_whales`: Compare 2–5 wallets and rank by smart-money score. Returns ranking, best_for_copy_trading, and comparison summary.
   - `whale_risk_snapshot`: Quick risk and copy-trade signal for one wallet. Returns risk_level, copy_trade_signal, one_line_rationale, and agent_summary.
-- **Transport**: Streamable HTTP at `/mcp` (GET = info, POST = JSON-RPC). Compatible with Context Protocol, Claude, and other MCP clients.
-- **Optional API Keys**: Works with Etherscan (optional key for higher rate limits) and optional WhaleMind API URL for verdict/confidence and balance.
+- **Transport**: Streamable HTTP at `/mcp` (same as [Blocknative example](https://github.com/ctxprotocol/sdk/tree/main/examples/server/blocknative-contributor)). Compatible with Context, Claude, and other MCP clients.
+- **Context middleware**: Uses `createContextMiddleware()` from `@ctxprotocol/sdk` on the `/mcp` route.
+- **Optional API Keys**: Etherscan (optional, for rate limits); WhaleMind API URL (optional, for verdict/confidence and balance).
 
 ## Prerequisites
 
@@ -59,7 +74,7 @@ The server provides three tools, accessible via the MCP Streamable HTTP transpor
    npm start
    ```
 
-   Server listens on `http://0.0.0.0:3000`. Health check: `GET /health` → `OK`. MCP endpoint: `POST /mcp`.
+   Server listens on `http://0.0.0.0:3000`. Health: `GET /health`. MCP: `POST /mcp`.
 
 3. **Deploy to Railway** (Context / production):
 

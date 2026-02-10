@@ -1,9 +1,11 @@
 /**
- * WhaleMind MCP Server — Official MCP SDK only. No custom JSON-RPC.
- * All protocol handling: @modelcontextprotocol/sdk (Streamable HTTP at /mcp).
+ * WhaleMind MCP Server — Context Protocol compliant (Blocknative example pattern).
+ * - @modelcontextprotocol/sdk: MCP server, tools with outputSchema, Streamable HTTP.
+ * - @ctxprotocol/sdk: createContextMiddleware for request verification.
  */
 import "./loadEnv.js";
 import express from "express";
+import { createContextMiddleware } from "@ctxprotocol/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -235,7 +237,14 @@ function toolResponse(data, options = {}) {
   };
 }
 
-/** Exact shape for whale_intel_report outputSchema. Always returns an object; all required fields present. */
+/** Keys allowed by whale_intel_report outputSchema — no extra keys for strict Context validation. */
+const WHALE_INTEL_KEYS = [
+  "address", "verdict", "confidence", "entity_type", "summary", "risk_level", "copy_trade_signal",
+  "total_txs", "total_in_eth", "total_out_eth", "unique_counterparties", "balance_wei", "agent_summary",
+  "first_seen_iso", "last_seen_iso",
+];
+
+/** Exact shape for whale_intel_report outputSchema. Types must match: balance_wei string|null, numbers as number. */
 function whaleIntelReportStructuredContent(overrides = {}) {
   const base = {
     address: "",
@@ -246,30 +255,46 @@ function whaleIntelReportStructuredContent(overrides = {}) {
     total_out_eth: 0,
     unique_counterparties: 0,
     agent_summary: "",
-    verdict: undefined,
-    confidence: undefined,
-    entity_type: undefined,
-    summary: undefined,
     balance_wei: null,
     first_seen_iso: null,
     last_seen_iso: null,
   };
   const out = { ...base, ...overrides };
-  Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
-  return out;
+  const allowed = new Set(WHALE_INTEL_KEYS);
+  const result = {};
+  for (const k of Object.keys(out)) {
+    if (!allowed.has(k) || out[k] === undefined) continue;
+    let v = out[k];
+    if (k === "balance_wei" && v != null) v = String(v);
+    if ((k === "first_seen_iso" || k === "last_seen_iso") && v != null) v = String(v);
+    if (k === "total_txs" || k === "total_in_eth" || k === "total_out_eth" || k === "unique_counterparties") v = Number(v);
+    if (k === "confidence" && v != null) v = Number(v);
+    result[k] = v;
+  }
+  return result;
 }
 
-/** Exact shape for compare_whales outputSchema. Root always object; all required fields present. */
+/** Exact shape for compare_whales outputSchema. Only these keys; no extra (e.g. no error in object). */
 function compareWhalesStructuredContent(overrides = {}) {
+  const wallets = ensureArray(overrides.wallets);
+  const ranking = ensureArray(overrides.ranking);
   return {
-    wallets: ensureArray(overrides.wallets),
-    ranking: ensureArray(overrides.ranking),
+    wallets: wallets.map((w) => ({
+      address: String(w?.address ?? ""),
+      ...(w?.verdict != null && { verdict: String(w.verdict) }),
+      ...(w?.confidence != null && { confidence: Number(w.confidence) }),
+      smart_money_score: Number(w?.smart_money_score ?? 0),
+      copy_trade_signal: String(w?.copy_trade_signal ?? "NEUTRAL"),
+      total_txs: Number(w?.total_txs ?? 0),
+    })),
+    ranking: ranking.map((s) => String(s)),
     best_for_copy_trading: overrides.best_for_copy_trading ?? null,
-    comparison_summary: overrides.comparison_summary ?? "",
+    comparison_summary: String(overrides.comparison_summary ?? ""),
   };
 }
 
-/** Exact shape for whale_risk_snapshot outputSchema. Root always object; all required fields present. */
+/** Exact shape for whale_risk_snapshot outputSchema. Only schema keys; types match. */
+const WHALE_RISK_KEYS = ["address", "risk_level", "copy_trade_signal", "verdict", "confidence", "one_line_rationale", "agent_summary"];
 function whaleRiskSnapshotStructuredContent(overrides = {}) {
   const base = {
     address: "",
@@ -279,8 +304,13 @@ function whaleRiskSnapshotStructuredContent(overrides = {}) {
     agent_summary: "",
   };
   const out = { ...base, ...overrides };
-  Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
-  return out;
+  const allowed = new Set(WHALE_RISK_KEYS);
+  const result = {};
+  for (const k of Object.keys(out)) {
+    if (!allowed.has(k) || out[k] === undefined) continue;
+    result[k] = out[k];
+  }
+  return result;
 }
 
 function errorResult(message, schemaType = "whale_intel_report", context = {}) {
@@ -521,9 +551,9 @@ app.use(express.json({ limit: "1mb" }));
 // ---- Routes: only /health and /mcp are required for Context; rest are informational ----
 app.get("/", (_req, res) => res.send("Server running"));
 
-// Context Protocol: health check must return 200 OK.
+// Context Protocol: health check (Blocknative-style JSON).
 app.get("/health", (_req, res) => {
-  res.status(200).send("OK");
+  res.status(200).json({ status: "ok", server: "whalemind-mcp", version: "1.0.0" });
 });
 
 app.get("/analyze", (_req, res) => {
@@ -539,8 +569,9 @@ app.get("/wallet/:address", (req, res) => {
   });
 });
 
-// ---- MCP at /mcp: 100% handled by @modelcontextprotocol/sdk (no custom JSON-RPC) ----
-// GET: plain text only so Context never treats it as protocol. POST: delegated to SDK transport.
+// ---- MCP at /mcp: Context middleware + @modelcontextprotocol/sdk (Blocknative pattern) ----
+const verifyContextAuth = createContextMiddleware();
+
 async function mcpHandler(req, res, next) {
   if (req.method === "GET") {
     res.set("Allow", "POST");
@@ -576,7 +607,8 @@ async function mcpHandler(req, res, next) {
     next(error);
   }
 }
-app.use("/mcp", mcpHandler);
+
+app.use("/mcp", verifyContextAuth, mcpHandler);
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.message?.includes("JSON")) {
