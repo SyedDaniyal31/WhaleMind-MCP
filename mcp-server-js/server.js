@@ -9,7 +9,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { statelessHandler } from "express-mcp-handler";
 import { z } from "zod";
 
-const PORT = parseInt(process.env.PORT || "3010", 10);
+const PORT = parseInt(process.env.PORT || "3000", 10);
+const HOST = process.env.HOST || "0.0.0.0";
 const WHALEMIND_API_URL = (process.env.WHalemind_API_URL || process.env.WHALEMIND_API_URL || "").replace(/\/$/, "");
 const ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
@@ -460,13 +461,8 @@ function createMcpServer() {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    service: "WhaleMind MCP",
-    mcp_endpoint: "POST /mcp",
-    tools: ["whale_intel_report", "compare_whales", "whale_risk_snapshot"],
-  });
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
 });
 
 app.post("/mcp", statelessHandler(createMcpServer, {
@@ -489,9 +485,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null });
 });
 
-app.listen(PORT, () => {
-  console.error(`WhaleMind MCP server listening on port ${PORT}`);
-  console.error("  Tools: whale_intel_report | compare_whales | whale_risk_snapshot");
+app.listen(PORT, HOST, () => {
+  console.error(`WhaleMind MCP server listening on ${HOST}:${PORT}`);
+  console.error("  MCP endpoint: POST /mcp");
   if (!ETHERSCAN_API_KEY) console.error("  Warning: ETHERSCAN_API_KEY not set (rate limits apply)");
   if (!WHALEMIND_API_URL) console.error("  Optional: WHALEMIND_API_URL for verdict/confidence (else on-chain heuristics)");
 });
