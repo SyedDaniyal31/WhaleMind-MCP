@@ -217,7 +217,8 @@ function toPlainStructuredContent(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
-function whaleIntelReportSchema(overrides = {}) {
+/** Exact shape for whale_intel_report outputSchema. Always returns an object; all required fields present. */
+function whaleIntelReportStructuredContent(overrides = {}) {
   const base = {
     address: "",
     risk_level: "MEDIUM",
@@ -227,6 +228,13 @@ function whaleIntelReportSchema(overrides = {}) {
     total_out_eth: 0,
     unique_counterparties: 0,
     agent_summary: "",
+    verdict: undefined,
+    confidence: undefined,
+    entity_type: undefined,
+    summary: undefined,
+    balance_wei: null,
+    first_seen_iso: null,
+    last_seen_iso: null,
   };
   const out = { ...base, ...overrides };
   Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
@@ -258,13 +266,13 @@ function whaleRiskSnapshotSchema(overrides = {}) {
 function errorResult(message, schemaType = "whale_intel_report", context = {}) {
   let structuredContent;
   if (schemaType === "whale_intel_report") {
-    structuredContent = whaleIntelReportSchema({ address: context.address ?? "" });
+    structuredContent = whaleIntelReportStructuredContent({ address: context.address ?? "" });
   } else if (schemaType === "compare_whales") {
     structuredContent = compareWhalesSchema({ comparison_summary: "" });
   } else if (schemaType === "whale_risk_snapshot") {
     structuredContent = whaleRiskSnapshotSchema({ address: context.address ?? "" });
   } else {
-    structuredContent = whaleIntelReportSchema({ address: "" });
+    structuredContent = whaleIntelReportStructuredContent({ address: "" });
   }
   return {
     content: [{ type: "text", text: message }],
@@ -311,14 +319,17 @@ function createMcpServer() {
     },
     async ({ address, limit = 50 }) => {
       const addr = (address || "").trim();
-      const base = whaleIntelReportSchema({ address: addr });
+
       if (!addr || !addr.startsWith("0x")) {
+        const structuredContent = toPlainStructuredContent(whaleIntelReportStructuredContent({ address: addr || "" }));
+        console.log("[whale_intel_report] return shape (invalid address):", typeof structuredContent === "object" && structuredContent !== null && !Array.isArray(structuredContent), Object.keys(structuredContent || {}));
         return {
           content: [{ type: "text", text: "Invalid address" }],
-          structuredContent: toPlainStructuredContent(whaleIntelReportSchema({ address: addr || "" })),
+          structuredContent,
           isError: true,
         };
       }
+
       try {
         const [txs, analyzeRes, balanceWei] = await Promise.all([
           fetchTransactions(addr, limit),
@@ -332,7 +343,7 @@ function createMcpServer() {
         const agentSummary =
           `Whale ${addr.slice(0, 10)}…: ${verdict || "on-chain only"}. ${interpretation.copy_trade_signal}. ` +
           (analyzeRes?.summary ? analyzeRes.summary.slice(0, 100) + "…" : `${metrics.total_txs} txs, ${metrics.unique_counterparties} counterparties.`);
-        const data = whaleIntelReportSchema({
+        const data = whaleIntelReportStructuredContent({
           address: addr,
           risk_level: interpretation.risk_level,
           copy_trade_signal: interpretation.copy_trade_signal,
@@ -349,13 +360,22 @@ function createMcpServer() {
           first_seen_iso: metrics.first_seen_iso ?? null,
           last_seen_iso: metrics.last_seen_iso ?? null,
         });
+        const structuredContent = toPlainStructuredContent(data);
+        console.log("[whale_intel_report] return shape (success):", typeof structuredContent === "object" && structuredContent !== null && !Array.isArray(structuredContent), Object.keys(structuredContent || {}));
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toPlainStructuredContent(data),
+          content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+          structuredContent,
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        return errorResult(msg, "whale_intel_report", { address: addr });
+        const emptyValid = whaleIntelReportStructuredContent({ address: addr, agent_summary: msg });
+        const structuredContent = toPlainStructuredContent(emptyValid);
+        console.log("[whale_intel_report] return shape (API fail):", typeof structuredContent === "object" && structuredContent !== null && !Array.isArray(structuredContent), Object.keys(structuredContent || {}));
+        return {
+          content: [{ type: "text", text: msg }],
+          structuredContent,
+          isError: true,
+        };
       }
     }
   );
