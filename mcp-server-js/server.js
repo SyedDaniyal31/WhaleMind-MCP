@@ -477,6 +477,14 @@ app.get("/wallet/:address", (req, res) => {
   });
 });
 
+app.get("/mcp", (_req, res) => {
+  res.json({
+    jsonrpc: "2.0",
+    message: "MCP endpoint: use POST with JSON-RPC body. Methods: initialize, tools/list, tools/call.",
+    hint: "Clients (Context, Claude, etc.) send POST requests; browser GET shows this info.",
+  });
+});
+
 app.post("/mcp", statelessHandler(createMcpServer, {
   onError: (err) => console.error("MCP error:", err),
 }));
@@ -502,7 +510,8 @@ const routes = [
   "GET  /health",
   "GET  /analyze",
   "GET  /wallet/:address",
-  "POST /mcp (MCP JSON-RPC)",
+  "GET  /mcp (info only)",
+  "POST /mcp (MCP JSON-RPC: initialize, tools/list, tools/call)",
 ];
 
 app.listen(PORT, HOST, () => {
