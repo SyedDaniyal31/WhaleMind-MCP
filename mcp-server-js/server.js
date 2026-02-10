@@ -1,9 +1,7 @@
 /**
- * WhaleMind MCP Server — Giga-brained, marketplace-competitive tools.
- * Combines Etherscan + optional WhaleMind API, adds risk/copy-trade signals and multi-wallet comparison.
+ * WhaleMind MCP Server — Fast boot for Railway. No DB/API calls before listen; lazy work in routes.
  */
-
-import "dotenv/config";
+import "./loadEnv.js";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { statelessHandler } from "express-mcp-handler";
@@ -14,8 +12,8 @@ const HOST = "0.0.0.0";
 const WHALEMIND_API_URL = (process.env.WHalemind_API_URL || process.env.WHALEMIND_API_URL || "").replace(/\/$/, "");
 const ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
-const REQUEST_TIMEOUT_MS = 25000;
-const API_TIMEOUT_MS = 55000;
+const REQUEST_TIMEOUT_MS = 10000;
+const API_TIMEOUT_MS = 10000;
 const WEI_PER_ETH = 1e18;
 
 // ---------------------------------------------------------------------------
@@ -55,7 +53,7 @@ async function fetchTransactions(address, limit = 20) {
     return Array.isArray(data.result) ? data.result : [];
   } catch (e) {
     clearTimeout(timeoutId);
-    console.error("Etherscan fetch error:", e?.message || e);
+    if (e?.name !== "AbortError") console.error("Etherscan fetch error:", e?.message || e);
     return [];
   }
 }
@@ -455,22 +453,16 @@ function createMcpServer() {
 }
 
 // ---------------------------------------------------------------------------
-// Express app
+// Express app — minimal setup before listen for fast boot
 // ---------------------------------------------------------------------------
 
+console.log("Server booting...");
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// Health routes for Railway (must respond before healthcheck times out)
-app.get("/", (_req, res) => {
-  res.send("MCP server running");
-});
+app.get("/", (_req, res) => res.send("MCP server running"));
+app.get("/health", (_req, res) => res.send("OK"));
 
-app.get("/health", (_req, res) => {
-  res.send("OK");
-});
-
-// MCP endpoint: supports initialize, listTools, callTool via JSON-RPC
 app.post("/mcp", statelessHandler(createMcpServer, {
   onError: (err) => console.error("MCP error:", err),
 }));
@@ -492,6 +484,7 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, HOST, () => {
+  console.log("Server ready");
   console.log(`Server running on ${HOST}:${PORT}`);
   if (!ETHERSCAN_API_KEY) console.warn("  ETHERSCAN_API_KEY not set");
   if (!WHALEMIND_API_URL) console.warn("  WHALEMIND_API_URL not set (optional)");
