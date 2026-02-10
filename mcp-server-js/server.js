@@ -217,6 +217,23 @@ function toPlainStructuredContent(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+/** Context Protocol: every tool MUST return this shape. data MUST be an object matching outputSchema exactly. */
+function toolResponse(data, options = {}) {
+  const { isError = false, contentText = null } = options;
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    console.error("[MCP] structuredContent must be object, got:", typeof data);
+    throw new Error("structuredContent must be an object");
+  }
+  const structuredContent = toPlainStructuredContent(data);
+  console.log("[MCP] structuredContent before return:", JSON.stringify(structuredContent).slice(0, 200) + (JSON.stringify(structuredContent).length > 200 ? "…" : ""));
+  const text = contentText != null ? contentText : JSON.stringify(data);
+  return {
+    content: [{ type: "text", text }],
+    structuredContent,
+    ...(isError && { isError: true }),
+  };
+}
+
 /** Exact shape for whale_intel_report outputSchema. Always returns an object; all required fields present. */
 function whaleIntelReportStructuredContent(overrides = {}) {
   const base = {
@@ -241,7 +258,8 @@ function whaleIntelReportStructuredContent(overrides = {}) {
   return out;
 }
 
-function compareWhalesSchema(overrides = {}) {
+/** Exact shape for compare_whales outputSchema. Root always object; all required fields present. */
+function compareWhalesStructuredContent(overrides = {}) {
   return {
     wallets: ensureArray(overrides.wallets),
     ranking: ensureArray(overrides.ranking),
@@ -250,7 +268,8 @@ function compareWhalesSchema(overrides = {}) {
   };
 }
 
-function whaleRiskSnapshotSchema(overrides = {}) {
+/** Exact shape for whale_risk_snapshot outputSchema. Root always object; all required fields present. */
+function whaleRiskSnapshotStructuredContent(overrides = {}) {
   const base = {
     address: "",
     risk_level: "MEDIUM",
@@ -268,9 +287,9 @@ function errorResult(message, schemaType = "whale_intel_report", context = {}) {
   if (schemaType === "whale_intel_report") {
     structuredContent = whaleIntelReportStructuredContent({ address: context.address ?? "" });
   } else if (schemaType === "compare_whales") {
-    structuredContent = compareWhalesSchema({ comparison_summary: "" });
+    structuredContent = compareWhalesStructuredContent({ comparison_summary: "" });
   } else if (schemaType === "whale_risk_snapshot") {
-    structuredContent = whaleRiskSnapshotSchema({ address: context.address ?? "" });
+    structuredContent = whaleRiskSnapshotStructuredContent({ address: context.address ?? "" });
   } else {
     structuredContent = whaleIntelReportStructuredContent({ address: "" });
   }
@@ -321,13 +340,8 @@ function createMcpServer() {
       const addr = (address || "").trim();
 
       if (!addr || !addr.startsWith("0x")) {
-        const structuredContent = toPlainStructuredContent(whaleIntelReportStructuredContent({ address: addr || "" }));
-        console.log("[whale_intel_report] return shape (invalid address):", typeof structuredContent === "object" && structuredContent !== null && !Array.isArray(structuredContent), Object.keys(structuredContent || {}));
-        return {
-          content: [{ type: "text", text: "Invalid address" }],
-          structuredContent,
-          isError: true,
-        };
+        const data = whaleIntelReportStructuredContent({ address: addr || "" });
+        return toolResponse(data, { isError: true, contentText: "Invalid address" });
       }
 
       try {
@@ -360,22 +374,11 @@ function createMcpServer() {
           first_seen_iso: metrics.first_seen_iso ?? null,
           last_seen_iso: metrics.last_seen_iso ?? null,
         });
-        const structuredContent = toPlainStructuredContent(data);
-        console.log("[whale_intel_report] return shape (success):", typeof structuredContent === "object" && structuredContent !== null && !Array.isArray(structuredContent), Object.keys(structuredContent || {}));
-        return {
-          content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
-          structuredContent,
-        };
+        return toolResponse(data);
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        const emptyValid = whaleIntelReportStructuredContent({ address: addr, agent_summary: msg });
-        const structuredContent = toPlainStructuredContent(emptyValid);
-        console.log("[whale_intel_report] return shape (API fail):", typeof structuredContent === "object" && structuredContent !== null && !Array.isArray(structuredContent), Object.keys(structuredContent || {}));
-        return {
-          content: [{ type: "text", text: msg }],
-          structuredContent,
-          isError: true,
-        };
+        const data = whaleIntelReportStructuredContent({ address: addr });
+        return toolResponse(data, { isError: true, contentText: msg });
       }
     }
   );
@@ -433,19 +436,17 @@ function createMcpServer() {
         const comparison_summary = best
           ? `Best for copy-trading: ${best.slice(0, 10)}… (score ${byScore[0]?.smart_money_score}).`
           : `Ranked by score: ${byScore.map((w) => `${w.address.slice(0, 8)}…=${w.smart_money_score}`).join(", ")}.`;
-        const data = compareWhalesSchema({
+        const data = compareWhalesStructuredContent({
           wallets: ensureArray(results),
           ranking: ensureArray(byScore.map((w) => w.address)),
           best_for_copy_trading: best ?? null,
           comparison_summary: comparison_summary ?? "",
         });
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toPlainStructuredContent(data),
-        };
+        return toolResponse(data);
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        return errorResult(msg, "compare_whales");
+        const data = compareWhalesStructuredContent({});
+        return toolResponse(data, { isError: true, contentText: msg });
       }
     }
   );
@@ -473,13 +474,9 @@ function createMcpServer() {
     },
     async ({ address }) => {
       const addr = (address || "").trim();
-      const base = whaleRiskSnapshotSchema({ address: addr });
       if (!addr || !addr.startsWith("0x")) {
-        return {
-          content: [{ type: "text", text: "Invalid address" }],
-          structuredContent: toPlainStructuredContent(whaleRiskSnapshotSchema({ address: addr || "" })),
-          isError: true,
-        };
+        const data = whaleRiskSnapshotStructuredContent({ address: addr || "" });
+        return toolResponse(data, { isError: true, contentText: "Invalid address" });
       }
       try {
         const [txs, analyzeRes] = await Promise.all([
@@ -491,7 +488,7 @@ function createMcpServer() {
         const confidence = analyzeRes?.confidence;
         const interp = verdict != null ? fromVerdict(verdict, confidence) : fromMetrics(metrics);
         const oneLine = oneLineRationale(verdict, confidence, interp.risk_level, interp.copy_trade_signal);
-        const data = whaleRiskSnapshotSchema({
+        const data = whaleRiskSnapshotStructuredContent({
           address: addr,
           risk_level: interp.risk_level ?? "MEDIUM",
           copy_trade_signal: interp.copy_trade_signal ?? "NEUTRAL",
@@ -500,13 +497,11 @@ function createMcpServer() {
           ...(verdict != null && { verdict }),
           ...(typeof confidence === "number" && { confidence }),
         });
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toPlainStructuredContent(data),
-        };
+        return toolResponse(data);
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
-        return errorResult(msg, "whale_risk_snapshot", { address: addr });
+        const data = whaleRiskSnapshotStructuredContent({ address: addr });
+        return toolResponse(data, { isError: true, contentText: msg });
       }
     }
   );
@@ -539,17 +534,15 @@ app.get("/wallet/:address", (req, res) => {
   });
 });
 
-app.get("/mcp", (_req, res) => {
-  res.json({
-    jsonrpc: "2.0",
-    message: "MCP endpoint: use POST with JSON-RPC body. Methods: initialize, tools/list, tools/call.",
-    hint: "Clients (Context, Claude, etc.) send POST requests; browser GET shows this info.",
-  });
-});
-
-// Custom stateless handler with enableJsonResponse so clients (e.g. Context Protocol)
-// that send a batch get a single JSON response; avoids SSE parsing issues.
-app.post("/mcp", async (req, res, next) => {
+// MCP mounted at /mcp exactly (Context Protocol + Blocknative-style). GET = info, POST = JSON-RPC.
+async function mcpHandler(req, res, next) {
+  if (req.method === "GET") {
+    return res.json({
+      jsonrpc: "2.0",
+      message: "MCP endpoint: use POST with JSON-RPC body. Methods: initialize, tools/list, tools/call.",
+      hint: "Clients (Context, Claude, etc.) send POST requests; browser GET shows this info.",
+    });
+  }
   if (req.method !== "POST") {
     return res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null });
   }
@@ -576,7 +569,8 @@ app.post("/mcp", async (req, res, next) => {
     }
     next(error);
   }
-});
+}
+app.use("/mcp", mcpHandler);
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.message?.includes("JSON")) {
@@ -596,11 +590,11 @@ app.use((err, req, res, next) => {
 
 const routes = [
   "GET  /",
-  "GET  /health",
+  "GET  /health (Context Protocol health check)",
   "GET  /analyze",
   "GET  /wallet/:address",
-  "GET  /mcp (info only)",
-  "POST /mcp (MCP JSON-RPC: initialize, tools/list, tools/call)",
+  "GET  /mcp (info)",
+  "POST /mcp (MCP Streamable HTTP: initialize, tools/list, tools/call)",
 ];
 
 app.listen(PORT, HOST, () => {
