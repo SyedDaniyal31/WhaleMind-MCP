@@ -4,7 +4,7 @@
 import "./loadEnv.js";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { statelessHandler } from "express-mcp-handler";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
 const PORT = process.env.PORT || 3000;
@@ -211,6 +211,12 @@ function ensureArray(val) {
   return Array.isArray(val) ? val : [];
 }
 
+/** Ensures a plain JSON-serializable object for MCP/Context validation (no getters, no undefined keys). */
+function toPlainStructuredContent(obj) {
+  if (obj === null || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  return JSON.parse(JSON.stringify(obj));
+}
+
 function whaleIntelReportSchema(overrides = {}) {
   const base = {
     address: "",
@@ -262,7 +268,7 @@ function errorResult(message, schemaType = "whale_intel_report", context = {}) {
   }
   return {
     content: [{ type: "text", text: message }],
-    structuredContent,
+    structuredContent: toPlainStructuredContent(structuredContent),
     isError: true,
   };
 }
@@ -301,7 +307,6 @@ function createMcpServer() {
         agent_summary: z.string(),
         first_seen_iso: z.string().nullable().optional(),
         last_seen_iso: z.string().nullable().optional(),
-        error: z.string().optional(),
       }),
     },
     async ({ address, limit = 50 }) => {
@@ -310,7 +315,7 @@ function createMcpServer() {
       if (!addr || !addr.startsWith("0x")) {
         return {
           content: [{ type: "text", text: "Invalid address" }],
-          structuredContent: whaleIntelReportSchema({ address: addr || "" }),
+          structuredContent: toPlainStructuredContent(whaleIntelReportSchema({ address: addr || "" })),
           isError: true,
         };
       }
@@ -346,7 +351,7 @@ function createMcpServer() {
         });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: data,
+          structuredContent: toPlainStructuredContent(data),
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
@@ -416,7 +421,7 @@ function createMcpServer() {
         });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: data,
+          structuredContent: toPlainStructuredContent(data),
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
@@ -452,7 +457,7 @@ function createMcpServer() {
       if (!addr || !addr.startsWith("0x")) {
         return {
           content: [{ type: "text", text: "Invalid address" }],
-          structuredContent: whaleRiskSnapshotSchema({ address: addr || "" }),
+          structuredContent: toPlainStructuredContent(whaleRiskSnapshotSchema({ address: addr || "" })),
           isError: true,
         };
       }
@@ -477,7 +482,7 @@ function createMcpServer() {
         });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: data,
+          structuredContent: toPlainStructuredContent(data),
         };
       } catch (err) {
         const msg = err?.name === "AbortError" ? "Request timeout" : (err?.message || String(err));
@@ -522,9 +527,36 @@ app.get("/mcp", (_req, res) => {
   });
 });
 
-app.post("/mcp", statelessHandler(createMcpServer, {
-  onError: (err) => console.error("MCP error:", err),
-}));
+// Custom stateless handler with enableJsonResponse so clients (e.g. Context Protocol)
+// that send a batch get a single JSON response; avoids SSE parsing issues.
+app.post("/mcp", async (req, res, next) => {
+  if (req.method !== "POST") {
+    return res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null });
+  }
+  let transport;
+  let server;
+  try {
+    server = createMcpServer();
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    res.on("close", () => {
+      if (transport) transport.close();
+      if (server) server.close();
+    });
+  } catch (error) {
+    if (transport) transport.close();
+    if (server) server.close();
+    console.error("MCP error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
+    }
+    next(error);
+  }
+});
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.message?.includes("JSON")) {
