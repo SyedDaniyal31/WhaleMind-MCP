@@ -9,7 +9,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { statelessHandler } from "express-mcp-handler";
 import { z } from "zod";
 
-const PORT = Math.max(1, parseInt(process.env.PORT, 10) || 3000);
+const PORT = process.env.PORT || 3000;
+const HOST = "0.0.0.0";
 const WHALEMIND_API_URL = (process.env.WHalemind_API_URL || process.env.WHALEMIND_API_URL || "").replace(/\/$/, "");
 const ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
@@ -466,7 +467,7 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+  res.send("OK");
 });
 
 // MCP endpoint: supports initialize, listTools, callTool via JSON-RPC
@@ -490,9 +491,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Listening on 0.0.0.0:${PORT} (PORT=${process.env.PORT || "none"})`);
-  console.log("  GET / and GET /health; POST /mcp for MCP");
+app.listen(PORT, HOST, () => {
+  console.log(`Server running on ${HOST}:${PORT}`);
   if (!ETHERSCAN_API_KEY) console.warn("  ETHERSCAN_API_KEY not set");
   if (!WHALEMIND_API_URL) console.warn("  WHALEMIND_API_URL not set (optional)");
 });
