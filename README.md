@@ -14,4 +14,4 @@ python api.py
 
 **Flask API:** Set `ETHERSCAN_API_KEY` and `DATABASE_URL` in environment; Procfile: `web: gunicorn api:app`.
 
-**MCP server (Node):** Deploy from this repo with Railway → Settings → **Dockerfile path** = `Dockerfile.mcp`, **Start command** = `node server.js`. See [mcp-server-js/RAILWAY-DEPLOY.md](mcp-server-js/RAILWAY-DEPLOY.md).
+**MCP server (Node):** Full step-by-step → **[RAILWAY-DEPLOY-STEPS.md](RAILWAY-DEPLOY-STEPS.md)**. Short: Railway → **Root Directory** = empty, **Dockerfile path** = `Dockerfile.mcp`, **Start command** = `node server.js`.
