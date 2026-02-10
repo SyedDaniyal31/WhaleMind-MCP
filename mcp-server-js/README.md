@@ -56,17 +56,25 @@ npm start
 ## Deploy to Railway
 
 1. In [Railway](https://railway.app): **New Project** → **Deploy from GitHub** → select this repo.
-2. **Service settings** → set **Root Directory** to `mcp-server-js`.
+2. **Service settings** → set **Root Directory** to `mcp-server-js` (required — see below).
 3. **Variables**: add
    - `ETHERSCAN_API_KEY` — your Etherscan API key (recommended)
    - `WHALEMIND_API_URL` — your Flask API URL (e.g. `https://whalemind-mcp.up.railway.app`)
-4. **Deploy**. Railway runs `npm start` (see `railway.toml`).
+4. **Deploy**. Railway will use the `Dockerfile` here (Node 20 image); start is `node server.js`.
 5. **Settings** → **Networking** → **Generate Domain** to get a URL like `https://your-service.up.railway.app`.
 
 **MCP endpoint for Context / clients:**  
 `https://your-service.up.railway.app/mcp`
 
 - Health: `GET https://your-service.up.railway.app/health` → `{ "status": "ok" }`
+
+### If you see "npm: command not found" in deploy logs
+
+The service is building from the **repo root** (Flask/Python) instead of this folder. Fix:
+
+- Open the **web** (or this) service → **Settings** → **General**.
+- Set **Root Directory** to exactly: `mcp-server-js`.
+- Save and **Redeploy**. Railway will then build from this directory, use the Dockerfile (Node 20), and `node server.js` will run correctly.
 
 ## Test tools/list
 
