@@ -233,7 +233,6 @@ function compareWhalesSchema(overrides = {}) {
     ranking: ensureArray(overrides.ranking),
     best_for_copy_trading: overrides.best_for_copy_trading ?? null,
     comparison_summary: overrides.comparison_summary ?? "",
-    ...(overrides.error != null && { error: overrides.error }),
   };
 }
 
@@ -251,19 +250,20 @@ function whaleRiskSnapshotSchema(overrides = {}) {
 }
 
 function errorResult(message, schemaType = "whale_intel_report", context = {}) {
-  let structured;
+  let structuredContent;
   if (schemaType === "whale_intel_report") {
-    structured = whaleIntelReportSchema({ address: context.address ?? "", error: message });
+    structuredContent = whaleIntelReportSchema({ address: context.address ?? "" });
   } else if (schemaType === "compare_whales") {
-    structured = compareWhalesSchema({ comparison_summary: "", error: message });
+    structuredContent = compareWhalesSchema({ comparison_summary: "" });
   } else if (schemaType === "whale_risk_snapshot") {
-    structured = whaleRiskSnapshotSchema({ address: context.address ?? "", error: message });
+    structuredContent = whaleRiskSnapshotSchema({ address: context.address ?? "" });
   } else {
-    structured = whaleIntelReportSchema({ error: message });
+    structuredContent = whaleIntelReportSchema({ address: "" });
   }
   return {
     content: [{ type: "text", text: message }],
-    structuredContent: structured,
+    structuredContent,
+    isError: true,
   };
 }
 
@@ -308,10 +308,10 @@ function createMcpServer() {
       const addr = (address || "").trim();
       const base = whaleIntelReportSchema({ address: addr });
       if (!addr || !addr.startsWith("0x")) {
-        const structured = whaleIntelReportSchema({ address: addr, error: "Invalid address" });
         return {
-          content: [{ type: "text", text: JSON.stringify({ ...structured }) }],
-          structuredContent: structured,
+          content: [{ type: "text", text: "Invalid address" }],
+          structuredContent: whaleIntelReportSchema({ address: addr || "" }),
+          isError: true,
         };
       }
       try {
@@ -331,18 +331,18 @@ function createMcpServer() {
           address: addr,
           risk_level: interpretation.risk_level,
           copy_trade_signal: interpretation.copy_trade_signal,
-          total_txs: metrics.total_txs,
-          total_in_eth: metrics.total_in_eth,
-          total_out_eth: metrics.total_out_eth,
-          unique_counterparties: metrics.unique_counterparties,
-          agent_summary: agentSummary,
+          total_txs: metrics.total_txs ?? 0,
+          total_in_eth: metrics.total_in_eth ?? 0,
+          total_out_eth: metrics.total_out_eth ?? 0,
+          unique_counterparties: metrics.unique_counterparties ?? 0,
+          agent_summary: agentSummary ?? "",
           ...(verdict != null && { verdict }),
           ...(typeof confidence === "number" && { confidence }),
           ...(analyzeRes?.entity_type && { entity_type: analyzeRes.entity_type }),
           ...(analyzeRes?.summary && { summary: analyzeRes.summary }),
-          ...(balanceWei != null && { balance_wei: balanceWei }),
-          ...(metrics.first_seen_iso != null && { first_seen_iso: metrics.first_seen_iso }),
-          ...(metrics.last_seen_iso != null && { last_seen_iso: metrics.last_seen_iso }),
+          balance_wei: balanceWei ?? null,
+          first_seen_iso: metrics.first_seen_iso ?? null,
+          last_seen_iso: metrics.last_seen_iso ?? null,
         });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -391,12 +391,12 @@ function createMcpServer() {
             const confidence = analyzeRes?.confidence;
             const interp = verdict != null ? fromVerdict(verdict, confidence) : fromMetrics(metrics);
             return {
-              address: addr,
+              address: addr ?? "",
               ...(verdict != null && { verdict }),
               ...(typeof confidence === "number" && { confidence }),
-              smart_money_score: interp.smart_money_score,
-              copy_trade_signal: interp.copy_trade_signal,
-              total_txs: metrics.total_txs,
+              smart_money_score: interp.smart_money_score ?? 0,
+              copy_trade_signal: interp.copy_trade_signal ?? "NEUTRAL",
+              total_txs: metrics.total_txs ?? 0,
             };
           })
         );
@@ -411,8 +411,8 @@ function createMcpServer() {
         const data = compareWhalesSchema({
           wallets: ensureArray(results),
           ranking: ensureArray(byScore.map((w) => w.address)),
-          best_for_copy_trading: best,
-          comparison_summary,
+          best_for_copy_trading: best ?? null,
+          comparison_summary: comparison_summary ?? "",
         });
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
@@ -450,10 +450,10 @@ function createMcpServer() {
       const addr = (address || "").trim();
       const base = whaleRiskSnapshotSchema({ address: addr });
       if (!addr || !addr.startsWith("0x")) {
-        const structured = whaleRiskSnapshotSchema({ address: addr, error: "Invalid address" });
         return {
           content: [{ type: "text", text: "Invalid address" }],
-          structuredContent: structured,
+          structuredContent: whaleRiskSnapshotSchema({ address: addr || "" }),
+          isError: true,
         };
       }
       try {
@@ -468,9 +468,9 @@ function createMcpServer() {
         const oneLine = oneLineRationale(verdict, confidence, interp.risk_level, interp.copy_trade_signal);
         const data = whaleRiskSnapshotSchema({
           address: addr,
-          risk_level: interp.risk_level,
-          copy_trade_signal: interp.copy_trade_signal,
-          one_line_rationale: oneLine,
+          risk_level: interp.risk_level ?? "MEDIUM",
+          copy_trade_signal: interp.copy_trade_signal ?? "NEUTRAL",
+          one_line_rationale: oneLine ?? "",
           agent_summary: `${interp.copy_trade_signal}: ${addr.slice(0, 10)}… — ${oneLine}`,
           ...(verdict != null && { verdict }),
           ...(typeof confidence === "number" && { confidence }),
