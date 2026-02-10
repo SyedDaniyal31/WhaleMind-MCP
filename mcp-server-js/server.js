@@ -9,8 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { statelessHandler } from "express-mcp-handler";
 import { z } from "zod";
 
-const PORT = parseInt(process.env.PORT || "3000", 10);
-const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Number(process.env.PORT) || 3000;
 const WHALEMIND_API_URL = (process.env.WHalemind_API_URL || process.env.WHALEMIND_API_URL || "").replace(/\/$/, "");
 const ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
@@ -461,13 +460,16 @@ function createMcpServer() {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// Root and /health — quick JSON response so browser/probes don't hang
-app.get(["/", "/health"], (_req, res) => {
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Cache-Control", "no-store");
-  res.status(200).end(JSON.stringify({ status: "ok" }));
+// Health routes for Railway (must respond before healthcheck times out)
+app.get("/", (_req, res) => {
+  res.send("MCP server running");
 });
 
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+// MCP endpoint: supports initialize, listTools, callTool via JSON-RPC
 app.post("/mcp", statelessHandler(createMcpServer, {
   onError: (err) => console.error("MCP error:", err),
 }));
@@ -488,9 +490,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null });
 });
 
-app.listen(PORT, HOST, () => {
-  console.error(`WhaleMind MCP server listening on ${HOST}:${PORT}`);
-  console.error("  MCP endpoint: POST /mcp");
-  if (!ETHERSCAN_API_KEY) console.error("  Warning: ETHERSCAN_API_KEY not set (rate limits apply)");
-  if (!WHALEMIND_API_URL) console.error("  Optional: WHALEMIND_API_URL for verdict/confidence (else on-chain heuristics)");
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on ${PORT}`);
+  console.log("  GET / and GET /health for checks; POST /mcp for MCP");
+  if (!ETHERSCAN_API_KEY) console.warn("  ETHERSCAN_API_KEY not set (rate limits apply)");
+  if (!WHALEMIND_API_URL) console.warn("  WHALEMIND_API_URL not set (optional)");
 });
