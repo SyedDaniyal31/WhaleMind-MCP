@@ -461,9 +461,11 @@ function createMcpServer() {
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// Root and /health for Railway healthcheck (passes on either path)
+// Root and /health — quick JSON response so browser/probes don't hang
 app.get(["/", "/health"], (_req, res) => {
-  res.json({ status: "ok" });
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store");
+  res.status(200).end(JSON.stringify({ status: "ok" }));
 });
 
 app.post("/mcp", statelessHandler(createMcpServer, {
