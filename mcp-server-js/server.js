@@ -424,7 +424,8 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/", (_req, res) => res.redirect(301, "/health"));
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 
-// Context auth: initialize + tools/list → no JWT; tools/call → JWT required
+// Context auth: OPEN (initialize, tools/list) → no JWT; PROTECTED (tools/call) → JWT required
+// createContextMiddleware uses isProtectedMcpMethod + verifyContextRequest internally → 401 if invalid
 const SKIP_CONTEXT_AUTH = process.env.SKIP_CONTEXT_AUTH === "true";
 if (!SKIP_CONTEXT_AUTH) {
   app.use(

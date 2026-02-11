@@ -20,15 +20,18 @@
 
 ---
 
-## 2) AUTH FLOW
+## 2) AUTH FLOW (Universal SDK pattern)
 
 ```
-createContextMiddleware():
-  IF method === "tools/call"  → require JWT (verifyContextRequest)
-  ELSE (initialize, tools/list, etc.) → allow, call next()
+const protectedMethod = isProtectedMcpMethod(method)   // tools/call only
+IF protectedMethod:
+    verifyContextRequest(Authorization header)
+    → 401 Unauthorized if invalid
+ELSE:
+    allow (initialize, tools/list, resources/list, prompts/list)
 ```
 
-**Implementation:** `app.use("/mcp", createContextMiddleware())` — middleware runs before handler. SDK handles method check internally.
+**Implementation:** `createContextMiddleware()` wraps `isProtectedMcpMethod` + `verifyContextRequest` per SDK docs. Applied via `app.use("/mcp", createContextMiddleware())`.
 
 ---
 
