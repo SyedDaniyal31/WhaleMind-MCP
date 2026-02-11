@@ -42,22 +42,23 @@ const TOOLS = [
     },
     outputSchema: {
       type: "object",
+      description: "Whale intelligence report — structured for AI parsing and payment verification",
       properties: {
-        address: { type: "string" },
-        verdict: { type: "string" },
-        confidence: { type: "number" },
-        entity_type: { type: "string" },
-        summary: { type: "string" },
-        risk_level: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] },
-        copy_trade_signal: { type: "string", enum: ["STRONG_BUY", "BUY", "WATCH", "AVOID", "NEUTRAL"] },
-        total_txs: { type: "number" },
-        total_in_eth: { type: "number" },
-        total_out_eth: { type: "number" },
-        unique_counterparties: { type: "number" },
-        balance_wei: { type: ["string", "null"] },
-        agent_summary: { type: "string" },
-        first_seen_iso: { type: ["string", "null"] },
-        last_seen_iso: { type: ["string", "null"] },
+        address: { type: "string", description: "Ethereum wallet address analyzed" },
+        verdict: { type: "string", description: "WhaleMind verdict label (if API configured)" },
+        confidence: { type: "number", description: "Confidence score 0–1" },
+        entity_type: { type: "string", description: "Wallet classification (e.g. smart money, exchange)" },
+        summary: { type: "string", description: "Extended analysis summary" },
+        risk_level: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"], description: "Risk tier" },
+        copy_trade_signal: { type: "string", enum: ["STRONG_BUY", "BUY", "WATCH", "AVOID", "NEUTRAL"], description: "Copy-trade recommendation" },
+        total_txs: { type: "number", description: "Total transactions analyzed" },
+        total_in_eth: { type: "number", description: "Total ETH received" },
+        total_out_eth: { type: "number", description: "Total ETH sent" },
+        unique_counterparties: { type: "number", description: "Unique counterparty count" },
+        balance_wei: { type: ["string", "null"], description: "Current balance in wei (string for precision)" },
+        agent_summary: { type: "string", description: "One-line agent summary" },
+        first_seen_iso: { type: ["string", "null"], description: "First activity timestamp ISO 8601" },
+        last_seen_iso: { type: ["string", "null"], description: "Most recent activity timestamp ISO 8601" },
       },
       required: ["address", "risk_level", "copy_trade_signal", "total_txs", "total_in_eth", "total_out_eth", "unique_counterparties", "agent_summary"],
     },
@@ -76,25 +77,27 @@ const TOOLS = [
     },
     outputSchema: {
       type: "object",
+      description: "Whale comparison — ranked by smart-money score for AI parsing",
       properties: {
         wallets: {
           type: "array",
+          description: "Wallets sorted by smart_money_score descending",
           items: {
             type: "object",
             properties: {
-              address: { type: "string" },
-              verdict: { type: "string" },
-              confidence: { type: "number" },
-              smart_money_score: { type: "number" },
-              copy_trade_signal: { type: "string" },
-              total_txs: { type: "number" },
+              address: { type: "string", description: "Ethereum wallet address" },
+              verdict: { type: "string", description: "WhaleMind verdict if available" },
+              confidence: { type: "number", description: "Confidence score 0–1" },
+              smart_money_score: { type: "number", description: "0–100 score" },
+              copy_trade_signal: { type: "string", enum: ["STRONG_BUY", "BUY", "WATCH", "AVOID", "NEUTRAL"], description: "Copy-trade recommendation" },
+              total_txs: { type: "number", description: "Transaction count" },
             },
             required: ["address", "smart_money_score", "copy_trade_signal", "total_txs"],
           },
         },
-        ranking: { type: "array", items: { type: "string" } },
-        best_for_copy_trading: { type: ["string", "null"] },
-        comparison_summary: { type: "string" },
+        ranking: { type: "array", items: { type: "string" }, description: "Addresses in rank order" },
+        best_for_copy_trading: { type: ["string", "null"], description: "Top BUY/STRONG_BUY address or null" },
+        comparison_summary: { type: "string", description: "Human-readable comparison" },
       },
       required: ["wallets", "ranking", "best_for_copy_trading", "comparison_summary"],
     },
@@ -111,14 +114,15 @@ const TOOLS = [
     },
     outputSchema: {
       type: "object",
+      description: "Quick risk snapshot — lightweight for fast copy-trade decisions",
       properties: {
-        address: { type: "string" },
-        risk_level: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] },
-        copy_trade_signal: { type: "string", enum: ["STRONG_BUY", "BUY", "WATCH", "AVOID", "NEUTRAL"] },
-        verdict: { type: "string" },
-        confidence: { type: "number" },
-        one_line_rationale: { type: "string" },
-        agent_summary: { type: "string" },
+        address: { type: "string", description: "Ethereum wallet address" },
+        risk_level: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"], description: "Risk tier" },
+        copy_trade_signal: { type: "string", enum: ["STRONG_BUY", "BUY", "WATCH", "AVOID", "NEUTRAL"], description: "Copy-trade recommendation" },
+        verdict: { type: "string", description: "WhaleMind verdict if available" },
+        confidence: { type: "number", description: "Confidence score 0–1" },
+        one_line_rationale: { type: "string", description: "Single-line rationale" },
+        agent_summary: { type: "string", description: "Agent summary" },
       },
       required: ["address", "risk_level", "copy_trade_signal", "one_line_rationale", "agent_summary"],
     },
@@ -134,6 +138,30 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS 
 
 const toPlain = (o) => (o === null || typeof o !== "object" || Array.isArray(o) ? o : JSON.parse(JSON.stringify(o)));
 const ensureObject = (o) => (o != null && typeof o === "object" && !Array.isArray(o) ? toPlain(o) : {});
+
+/** Schema-defined keys per tool — ensures structuredContent matches outputSchema for Context payment verification & dispute resolution */
+const SCHEMA_KEYS = {
+  whale_intel_report: ["address", "verdict", "confidence", "entity_type", "summary", "risk_level", "copy_trade_signal", "total_txs", "total_in_eth", "total_out_eth", "unique_counterparties", "balance_wei", "agent_summary", "first_seen_iso", "last_seen_iso"],
+  compare_whales: ["wallets", "ranking", "best_for_copy_trading", "comparison_summary"],
+  whale_risk_snapshot: ["address", "risk_level", "copy_trade_signal", "verdict", "confidence", "one_line_rationale", "agent_summary"],
+};
+const WALLET_ITEM_KEYS = ["address", "verdict", "confidence", "smart_money_score", "copy_trade_signal", "total_txs"];
+
+function filterToSchema(data, toolName) {
+  if (!data || typeof data !== "object") return data;
+  const keys = SCHEMA_KEYS[toolName];
+  if (!keys) return toPlain(data);
+  const out = {};
+  for (const k of keys) if (k in data) out[k] = data[k];
+  if (toolName === "compare_whales" && Array.isArray(out.wallets)) {
+    out.wallets = out.wallets.map((w) => {
+      const wout = {};
+      for (const k of WALLET_ITEM_KEYS) if (k in w) wout[k] = w[k];
+      return wout;
+    });
+  }
+  return out;
+}
 
 const whaleIntelShape = (o = {}) => {
   const base = {
@@ -152,10 +180,13 @@ const compareShape = (o = {}) => ({
 const riskShape = (o = {}) => ({
   address: "", risk_level: "MEDIUM", copy_trade_signal: "NEUTRAL", one_line_rationale: "", agent_summary: "", ...o,
 });
-const successResult = (d) => ({
-  content: [{ type: "text", text: JSON.stringify(d, null, 2) }],
-  structuredContent: ensureObject(d),
-});
+const successResult = (d, toolName) => {
+  const filtered = filterToSchema(d, toolName);
+  return {
+    content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+    structuredContent: ensureObject(filtered),
+  };
+};
 const errorResult = (schema, msg, ctx) => {
   const sc = schema === "whale_intel_report" ? whaleIntelShape({ address: ctx?.address ?? "", agent_summary: msg })
     : schema === "compare_whales" ? compareShape({ comparison_summary: msg })
@@ -172,17 +203,17 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         const addr = (args?.address ?? "").trim();
         const limit = typeof args?.limit === "number" ? args.limit : 50;
         if (!addr || !addr.startsWith("0x")) return errorResult("whale_intel_report", "Invalid address", { address: addr || "" });
-        return successResult(await runWhaleIntelReport(addr, limit));
+        return successResult(await runWhaleIntelReport(addr, limit), "whale_intel_report");
       }
       case "compare_whales": {
         const addrs = Array.isArray(args?.addresses) ? args.addresses : [];
         if (addrs.length < 2 || addrs.length > 5) return errorResult("compare_whales", "Need 2 to 5 addresses", {});
-        return successResult(await runCompareWhales(addrs));
+        return successResult(await runCompareWhales(addrs), "compare_whales");
       }
       case "whale_risk_snapshot": {
         const addr = (args?.address ?? "").trim();
         if (!addr || !addr.startsWith("0x")) return errorResult("whale_risk_snapshot", "Invalid address", { address: addr || "" });
-        return successResult(await runWhaleRiskSnapshot(addr));
+        return successResult(await runWhaleRiskSnapshot(addr), "whale_risk_snapshot");
       }
       default:
         return errorResult("whale_intel_report", `Unknown tool: ${name}`, {});
