@@ -132,22 +132,34 @@ const mcpServer = new Server(
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
 const toPlain = (o) => (o === null || typeof o !== "object" || Array.isArray(o) ? o : JSON.parse(JSON.stringify(o)));
-const whaleIntelShape = (o = {}) => ({
-  address: "", risk_level: "MEDIUM", copy_trade_signal: "NEUTRAL", total_txs: 0, total_in_eth: 0, total_out_eth: 0,
-  unique_counterparties: 0, agent_summary: "", balance_wei: null, first_seen_iso: null, last_seen_iso: null, ...o,
-});
+const ensureObject = (o) => (o != null && typeof o === "object" && !Array.isArray(o) ? toPlain(o) : {});
+
+const whaleIntelShape = (o = {}) => {
+  const base = {
+    address: "", risk_level: "MEDIUM", copy_trade_signal: "NEUTRAL", total_txs: 0, total_in_eth: 0, total_out_eth: 0,
+    unique_counterparties: 0, agent_summary: "", balance_wei: null, first_seen_iso: null, last_seen_iso: null,
+  };
+  const merged = { ...base, ...o };
+  merged.balance_wei = merged.balance_wei != null ? String(merged.balance_wei) : null;
+  merged.first_seen_iso = merged.first_seen_iso != null ? String(merged.first_seen_iso) : null;
+  merged.last_seen_iso = merged.last_seen_iso != null ? String(merged.last_seen_iso) : null;
+  return merged;
+};
 const compareShape = (o = {}) => ({
   wallets: [], ranking: [], best_for_copy_trading: null, comparison_summary: "", ...o,
 });
 const riskShape = (o = {}) => ({
   address: "", risk_level: "MEDIUM", copy_trade_signal: "NEUTRAL", one_line_rationale: "", agent_summary: "", ...o,
 });
-const successResult = (d) => ({ content: [{ type: "text", text: JSON.stringify(d, null, 2) }], structuredContent: toPlain(d) });
+const successResult = (d) => ({
+  content: [{ type: "text", text: JSON.stringify(d, null, 2) }],
+  structuredContent: ensureObject(d),
+});
 const errorResult = (schema, msg, ctx) => {
   const sc = schema === "whale_intel_report" ? whaleIntelShape({ address: ctx?.address ?? "", agent_summary: msg })
     : schema === "compare_whales" ? compareShape({ comparison_summary: msg })
     : riskShape({ address: ctx?.address ?? "", one_line_rationale: msg, agent_summary: msg });
-  return { content: [{ type: "text", text: msg }], structuredContent: toPlain(sc), isError: true };
+  return { content: [{ type: "text", text: msg }], structuredContent: ensureObject(sc), isError: true };
 };
 
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
