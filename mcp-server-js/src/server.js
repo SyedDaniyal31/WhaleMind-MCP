@@ -727,9 +727,7 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
-app.get("/mcp", (_req, res) => {
-  res.type("text/plain").status(200).send("MCP endpoint — use POST");
-});
+app.get("/mcp", (_req, res) => res.set("Allow", "POST").status(405).end());
 
 app.delete("/mcp", (_req, res) => {
   res.set("Allow", "POST");
