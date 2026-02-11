@@ -1,3 +1,7 @@
+/**
+ * WhaleMind MCP Server — MCP spec + Context Protocol compliant
+ * Uses @modelcontextprotocol/sdk: Server, StreamableHTTPServerTransport
+ */
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import express from "express";
@@ -201,7 +205,7 @@ async function fetchTransactions(address, limit = 20) {
     return Array.isArray(data.result) ? data.result : [];
   } catch (e) {
     clearTimeout(t);
-    if (e?.name !== "AbortError") console.error("Etherscan error:", e?.message || e);
+    if (e?.name !== "AbortError") console.error("[Etherscan]", e?.message || e);
     return [];
   }
 }
@@ -361,25 +365,41 @@ async function runWhaleRiskSnapshot(addr) {
   });
 }
 
+function isInitRequest(body) {
+  if (body == null) return false;
+  if (Array.isArray(body)) return body.some(isInitializeRequest);
+  return isInitializeRequest(body);
+}
+
 const transports = {};
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
+app.get("/", (_req, res) => res.redirect(301, "/health"));
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
+  const body = req.body ?? {};
   let transport;
 
   if (sessionId && transports[sessionId]) {
     transport = transports[sessionId];
-  } else if (!sessionId && isInitializeRequest(req.body)) {
+  } else if (!sessionId && isInitRequest(body)) {
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true,
-      onsessioninitialized: (id) => { transports[id] = transport; },
+      onsessioninitialized: (id) => {
+        transports[id] = transport;
+        console.log("[MCP] Session initialized:", id);
+      },
     });
-    transport.onclose = () => { if (transport.sessionId) delete transports[transport.sessionId]; };
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        delete transports[transport.sessionId];
+        console.log("[MCP] Session closed:", transport.sessionId);
+      }
+    };
     await mcpServer.connect(transport);
   } else {
     res.status(400).json({
@@ -391,14 +411,39 @@ app.post("/mcp", async (req, res) => {
   }
 
   try {
-    await transport.handleRequest(req, res, req.body);
+    await transport.handleRequest(req, res, body);
   } catch (err) {
-    console.error("MCP error:", err);
-    if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
+    console.error("[MCP] handleRequest error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
+    }
   }
 });
 
 app.get("/mcp", (_req, res) => res.type("text/plain").status(200).send("MCP endpoint — use POST"));
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.message?.includes("JSON")) {
+    res.status(400).json({
+      jsonrpc: "2.0",
+      error: { code: -32700, message: "Parse error: invalid JSON" },
+      id: null,
+    });
+    return;
+  }
+  console.error("[MCP] Unhandled error:", err);
+  if (!res.headersSent) {
+    res.status(500).json({
+      jsonrpc: "2.0",
+      error: { code: -32603, message: "Internal server error" },
+      id: null,
+    });
+  }
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log("MCP Server running on port", PORT);
