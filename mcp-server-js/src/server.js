@@ -22,7 +22,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 const PORT = Number(process.env.PORT) || 3000;
-const HOST = "0.0.0.0";
 const WHALEMIND_API_URL = (
   process.env.WHalemind_API_URL ||
   process.env.WHALEMIND_API_URL ||
@@ -649,12 +648,12 @@ async function runWhaleRiskSnapshot(address) {
 const transports = {};
 
 const app = express();
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json());
 
 app.get("/", (_req, res) => res.send("Server running"));
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", server: "whalemind-mcp", version: "1.0.0" });
+  res.status(200).json({ status: "ok" });
 });
 
 app.get("/analyze", (_req, res) => {
@@ -728,40 +727,13 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
-app.get("/mcp", async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
-  const transport = transports[sessionId];
-
-  if (transport) {
-    try {
-      await transport.handleRequest(req, res);
-    } catch (error) {
-      console.error("MCP GET error:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal server error" });
-      }
-    }
-  } else {
-    res.status(400).json({ error: "Invalid session" });
-  }
+app.get("/mcp", (_req, res) => {
+  res.type("text/plain").status(200).send("MCP endpoint — use POST");
 });
 
-app.delete("/mcp", async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"];
-  const transport = transports[sessionId];
-
-  if (transport) {
-    try {
-      await transport.handleRequest(req, res);
-    } catch (error) {
-      console.error("MCP DELETE error:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal server error" });
-      }
-    }
-  } else {
-    res.status(400).json({ error: "Invalid session" });
-  }
+app.delete("/mcp", (_req, res) => {
+  res.set("Allow", "POST");
+  res.type("text/plain").status(405).send("Method Not Allowed. Use POST.");
 });
 
 app.use((err, req, res, next) => {
@@ -773,12 +745,6 @@ app.use((err, req, res, next) => {
   if (!res.headersSent) res.type("text/plain").status(500).send("Internal error");
 });
 
-console.log("Server booting...");
-app.listen(PORT, HOST, () => {
-  console.log("Server ready");
-  console.log(`Server running on ${HOST}:${PORT}`);
-  console.log("Routes: GET /, GET /health, GET /analyze, GET /wallet/:address");
-  console.log("MCP: POST /mcp (initialize, tools/list, tools/call), GET /mcp, DELETE /mcp");
-  if (!ETHERSCAN_API_KEY) console.warn("ETHERSCAN_API_KEY not set");
-  if (!WHALEMIND_API_URL) console.warn("WHALEMIND_API_URL not set (optional)");
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server started on port", PORT);
 });

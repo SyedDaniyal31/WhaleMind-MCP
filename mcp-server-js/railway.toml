@@ -5,7 +5,7 @@
 # Node.js detected automatically; no custom build needed
 
 [deploy]
-startCommand = "node src/server.js"
+startCommand = "node server.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
