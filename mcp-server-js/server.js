@@ -10,10 +10,17 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
+  isInitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createContextMiddleware } from "@ctxprotocol/sdk";
 
 const PORT = Number(process.env.PORT) || 3000;
+
+// Production safety: never run with auth disabled in production
+if (process.env.SKIP_CONTEXT_AUTH === "true" && process.env.NODE_ENV === "production") {
+  console.error("[MCP] FATAL: SKIP_CONTEXT_AUTH must not be set in production!");
+  process.exit(1);
+}
 const WHALEMIND_API_URL = (
   process.env.WHalemind_API_URL ||
   process.env.WHALEMIND_API_URL ||
@@ -408,6 +415,8 @@ async function runWhaleRiskSnapshot(addr) {
   });
 }
 
+const isInitRequest = (b) => (Array.isArray(b) ? b.some(isInitializeRequest) : isInitializeRequest(b));
+
 const transports = {};
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -434,7 +443,7 @@ app.post("/mcp", async (req, res) => {
 
   if (sessionId && transports[sessionId]) {
     transport = transports[sessionId];
-  } else if (!sessionId && req.body?.method === "initialize") {
+  } else if (!sessionId && isInitRequest(body)) {
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true,
