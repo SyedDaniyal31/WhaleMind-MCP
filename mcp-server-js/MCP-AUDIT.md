@@ -78,11 +78,17 @@ curl -s -X POST "$BASE_URL/mcp" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
 
-### 4. Tools Call (requires session)
+### 4. Tools Call (requires session + Context JWT)
+`tools/call` requires a valid JWT from the Context Platform. Plain curl will return `{"error":"Unauthorized"}`.
+
+**Options:**
+- **Local dev:** Set `SKIP_CONTEXT_AUTH=true` in `.env` to bypass auth (dev only!)
+- **Production:** Test through [ctxprotocol.com](https://ctxprotocol.com) or the Context app
+
 ```bash
+# With SKIP_CONTEXT_AUTH=true (local only):
 curl -s -X POST "$BASE_URL/mcp" \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
   -H "mcp-session-id: YOUR_SESSION_ID_FROM_STEP_2" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"whale_risk_snapshot","arguments":{"address":"0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"}}}'
 ```
@@ -95,12 +101,18 @@ curl -s -X GET "$BASE_URL/mcp"
 
 ---
 
+## Context Marketplace Notes
+
+- **New/updated tools not appearing?** Go to ctxprotocol.com/developer/tools → My Tools → **Refresh Skills**
+- **Unauthorized on tools/call?** Context requires a valid JWT. See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
+
 ## Production Best Practices
 
 1. **Always send `Accept: application/json, text/event-stream`** for MCP requests (MCP spec).
 2. **Session order**: Initialize first, then tools/list and tools/call with `mcp-session-id`.
-3. **Rate limiting**: Add `express-rate-limit` for production.
-4. **Logging**: Use structured logs (e.g. Pino) in production.
-5. **CORS**: Add CORS if needed for web clients.
-6. **Timeout**: Tool calls already have 10s timeout on external APIs.
-7. **package-lock.json**: Commit it; required for reproducible builds.
+3. **Never set SKIP_CONTEXT_AUTH** in production — enables unpaid tool execution.
+4. **Rate limiting**: Add `express-rate-limit` for production.
+5. **Logging**: Use structured logs (e.g. Pino) in production.
+6. **CORS**: Add CORS if needed for web clients.
+7. **Timeout**: Tool calls already have 10s timeout on external APIs.
+8. **package-lock.json**: Commit it; required for reproducible builds.
