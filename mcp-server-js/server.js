@@ -364,13 +364,6 @@ async function runWhaleRiskSnapshot(addr) {
   });
 }
 
-function isInitRequest(body) {
-  if (body == null) return false;
-  const hasInit = (m) => m && typeof m === "object" && m.method === "initialize";
-  if (Array.isArray(body)) return body.some(hasInit);
-  return hasInit(body);
-}
-
 const transports = {};
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -385,7 +378,7 @@ app.post("/mcp", async (req, res) => {
 
   if (sessionId && transports[sessionId]) {
     transport = transports[sessionId];
-  } else if (!sessionId && isInitRequest(body)) {
+  } else if (!sessionId && req.body?.method === "initialize") {
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true,
