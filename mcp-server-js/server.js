@@ -424,6 +424,7 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/", (_req, res) => res.redirect(301, "/health"));
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 
+// Context auth: initialize + tools/list → no JWT; tools/call → JWT required
 const SKIP_CONTEXT_AUTH = process.env.SKIP_CONTEXT_AUTH === "true";
 if (!SKIP_CONTEXT_AUTH) {
   app.use(
