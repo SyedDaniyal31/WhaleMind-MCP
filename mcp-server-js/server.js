@@ -11,6 +11,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createContextMiddleware } from "@ctxprotocol/sdk";
 
 const PORT = Number(process.env.PORT) || 3000;
 const WHALEMIND_API_URL = (
@@ -382,6 +383,13 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/", (_req, res) => res.redirect(301, "/health"));
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
+
+app.use(
+  "/mcp",
+  createContextMiddleware({
+    audience: process.env.MCP_ENDPOINT_URL || undefined,
+  })
+);
 
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
