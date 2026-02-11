@@ -10,7 +10,6 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
-  isInitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -367,8 +366,9 @@ async function runWhaleRiskSnapshot(addr) {
 
 function isInitRequest(body) {
   if (body == null) return false;
-  if (Array.isArray(body)) return body.some(isInitializeRequest);
-  return isInitializeRequest(body);
+  const hasInit = (m) => m && typeof m === "object" && m.method === "initialize";
+  if (Array.isArray(body)) return body.some(hasInit);
+  return hasInit(body);
 }
 
 const transports = {};
@@ -424,7 +424,7 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
-app.get("/mcp", (_req, res) => res.type("text/plain").status(200).send("MCP endpoint — use POST"));
+app.get("/mcp", (_req, res) => res.set("Allow", "POST").status(405).end());
 
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.message?.includes("JSON")) {
