@@ -6,7 +6,7 @@
 
 [deploy]
 startCommand = "node src/server.js"
-healthcheckPath = "/"
+healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
