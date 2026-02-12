@@ -473,7 +473,11 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
   const coordination = detectCoordination(txs, internalTxs, addr);
 
   const clusterData = buildClusterData(addr, funding, coordination);
-  const classification = classifyEntity(features, txs, funding);
+  const classification = classifyEntity(features, txs, funding, {
+    cluster_size: clusterData.cluster_size,
+    funding_source_count: Array.isArray(funding?.funders) ? funding.funders.length : 0,
+    address: addr,
+  });
   const confidenceResult = computeConfidence(features, classification, { total_txs: m.total_txs });
   const riskProfile = computeRiskProfile(features, classification, {
     confidence_score: confidenceResult.confidence_score,

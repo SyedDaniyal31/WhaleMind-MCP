@@ -1,32 +1,37 @@
 /**
- * Phase 3 — Confidence engine (hardened).
- * Caps: entity_score < 0.6 → max 0.55; tx_count < 100 → cap 0.5; wallet_age < 30 days → cap 0.45.
- * "Strong signals detected" only if ≥3 strong signals and entity_score ≥ 0.7.
+ * Tier-S++ Layer 6 — Confidence engine.
+ * confidence = base + signal_count_bonus - contradiction_penalty; cap when entity_score < 0.7.
  */
 
 const CAP_ENTITY_SCORE_THRESHOLD = 0.6;
 const CAP_ENTITY_SCORE_MAX = 0.55;
+const CAP_ENTITY_SCORE_07_THRESHOLD = 0.7;
+const CAP_ENTITY_SCORE_07_MAX = 0.75;
 const CAP_TX_COUNT_THRESHOLD = 100;
 const CAP_TX_COUNT_MAX = 0.5;
 const CAP_AGE_DAYS_THRESHOLD = 30;
 const CAP_AGE_MAX = 0.45;
 const STRONG_SIGNALS_MIN_COUNT = 3;
 const STRONG_SIGNALS_MIN_ENTITY_SCORE = 0.7;
+const SIGNAL_COUNT_BONUS_MAX = 0.15;
 
 /**
- * Compute confidence score and reasons. Apply caps; require strong evidence for "Strong signals" message.
+ * Compute confidence: base (data quality × signal strength × history) + signal_count_bonus - contradiction_penalty.
+ * Cap: if entity_score < 0.7 → confidence ≤ 0.75.
  */
 export function computeConfidence(features, classification, context = {}) {
   const reasons = [];
   let data_quality_score = 1;
   let history_depth_factor = 1;
-  let signal_strength = Math.min(1, classification?.entity_score ?? 0);
+  const signal_strength = Math.min(1, classification?.entity_score ?? 0);
+  const contradiction_penalty = Math.min(0.3, classification?.contradiction_penalty ?? 0);
+  const signalsUsed = classification?.signals_used ?? [];
+  const signal_count_bonus = Math.min(SIGNAL_COUNT_BONUS_MAX, signalsUsed.length * 0.03);
 
   const totalTxs = context.total_txs ?? deriveTotalTxsFromFeatures(features);
   const walletAgeDays = features?.activity_metrics?.wallet_age_days ?? 0;
   const uniqueCounterparties = features?.network_metrics?.unique_counterparties ?? 0;
   const entityScore = classification?.entity_score ?? 0;
-  const signalsUsed = classification?.signals_used ?? [];
 
   if (totalTxs < 100) {
     data_quality_score -= 0.3;
@@ -55,11 +60,15 @@ export function computeConfidence(features, classification, context = {}) {
   data_quality_score = Math.max(0.2, data_quality_score);
   history_depth_factor = Math.max(0.3, history_depth_factor);
 
-  let confidence_score = data_quality_score * signal_strength * history_depth_factor;
+  let confidence_score =
+    data_quality_score * signal_strength * history_depth_factor + signal_count_bonus - contradiction_penalty;
 
   if (entityScore < CAP_ENTITY_SCORE_THRESHOLD) {
     confidence_score = Math.min(confidence_score, CAP_ENTITY_SCORE_MAX);
     reasons.push("Low entity score caps confidence");
+  }
+  if (entityScore < CAP_ENTITY_SCORE_07_THRESHOLD) {
+    confidence_score = Math.min(confidence_score, CAP_ENTITY_SCORE_07_MAX);
   }
   if (totalTxs < CAP_TX_COUNT_THRESHOLD) {
     confidence_score = Math.min(confidence_score, CAP_TX_COUNT_MAX);
@@ -68,6 +77,9 @@ export function computeConfidence(features, classification, context = {}) {
     confidence_score = Math.min(confidence_score, CAP_AGE_MAX);
   }
 
+  if (contradiction_penalty > 0) {
+    reasons.push("Contradiction filters applied");
+  }
   if (
     signalsUsed.length >= STRONG_SIGNALS_MIN_COUNT &&
     entityScore >= STRONG_SIGNALS_MIN_ENTITY_SCORE &&
@@ -81,9 +93,7 @@ export function computeConfidence(features, classification, context = {}) {
     reasons.push("Insufficient signals for high-confidence classification");
   }
 
-  confidence_score = Math.round(
-    Math.max(0.05, Math.min(1, confidence_score)) * 100
-  ) / 100;
+  confidence_score = Math.round(Math.max(0.05, Math.min(1, confidence_score)) * 100) / 100;
 
   return {
     confidence_score,
