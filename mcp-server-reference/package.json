@@ -1,0 +1,18 @@
+{
+  "name": "mcp-server-reference",
+  "version": "1.0.0",
+  "description": "Reference MCP server — bridge between AI and real-world tools",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@ctxprotocol/sdk": "^0.5.5",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
+  }
+}

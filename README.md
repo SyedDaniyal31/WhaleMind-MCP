@@ -31,4 +31,4 @@ See [mcp-server-js/README.md](mcp-server-js/README.md) for full MCP docs.
 
 **Flask API:** Set `ETHERSCAN_API_KEY` and `DATABASE_URL` in environment; Procfile: `web: gunicorn api:app`.
 
-**MCP server (Node):** Full step-by-step → **[RAILWAY-DEPLOY-STEPS.md](RAILWAY-DEPLOY-STEPS.md)**. Short: Railway → **Root Directory** = `mcp-server-js`, **Start command** = `node src/server.js`.
+**MCP server (Node):** Railway → **Root Directory** = `mcp-server-js`, **Start command** = `node src/server.js`. See [mcp-server-js/REBUILD.md](mcp-server-js/REBUILD.md) for deployment.

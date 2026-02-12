@@ -31,7 +31,7 @@ return {
 
 ## Prerequisites
 
-- **Node.js**: Version 18 or later
+- **Node.js**: Version 20 or later
 - **Etherscan API Key** (optional): For higher rate limits. Get one at [Etherscan](https://etherscan.io/apis).
 - **WhaleMind API URL** (optional): When set, tools use your WhaleMind API for verdict, confidence, and balance.
 
@@ -83,7 +83,7 @@ The server provides three tools, accessible via the MCP Streamable HTTP transpor
    - Variables: `ETHERSCAN_API_KEY`, `WHALEMIND_API_URL` (optional).
    - MCP URL: `https://your-app.up.railway.app/mcp`
 
-   See [RAILWAY-DEPLOY.md](./RAILWAY-DEPLOY.md) for step-by-step.
+   See [REBUILD.md](./REBUILD.md) for deployment details.
 
 ### Tools
 
@@ -102,13 +102,16 @@ The server provides three tools, accessible via the MCP Streamable HTTP transpor
 Invoke-RestMethod -Uri http://localhost:3000/mcp -Method POST -ContentType "application/json" -Headers @{ Accept = "application/json, text/event-stream" } -Body '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
 
-## Project structure (Blocknative-style)
+## Project structure (v2 rebuild)
 
 ```
 mcp-server-js/
 ├── src/
-│   ├── server.js      # MCP server + Express app
-│   └── loadEnv.js     # Optional .env loading (dev only)
+│   ├── server.js       # Express app, routes, CORS
+│   ├── tools.js        # Tool definitions + execution
+│   ├── mcpHandler.js   # MCP Server, transport, sessions
+│   └── middleware/
+│       └── auth.js     # Context JWT middleware
 ├── .env.example
 ├── package.json
 ├── Dockerfile
@@ -116,6 +119,8 @@ mcp-server-js/
 ├── railway.toml
 └── README.md
 ```
+
+See [REBUILD.md](./REBUILD.md) for full rebuild notes, root cause analysis, and curl tests.
 
 ## License
 

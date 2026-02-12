@@ -1,8 +1,10 @@
-# WhaleMind MCP — when Root Directory = mcp-server-js
+# WhaleMind MCP Server — config when deploying from repo root
+# Ensures Dockerfile.mcp is used (not root Procfile which runs Flask)
 # https://docs.railway.app/config-as-code/reference
 
 [build]
-# Node.js detected automatically
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.mcp"
 
 [deploy]
 startCommand = "node src/server.js"
