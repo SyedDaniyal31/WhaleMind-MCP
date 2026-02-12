@@ -1,7 +1,14 @@
 /**
  * Context Protocol auth middleware.
- * - initialize, tools/list: no JWT required
- * - tools/call: JWT required (verified by createContextMiddleware)
+ *
+ * MCP method auth (Context / dispute model):
+ * - initialize         — no auth (session setup)
+ * - tools/list        — no auth (discovery; agents need schemas)
+ * - resources/list    — no auth (discovery)
+ * - prompts/list      — no auth (discovery)
+ * - tools/call        — JWT required (execution; costs money, runs code)
+ *
+ * createContextMiddleware verifies JWT only for tools/call.
  */
 import { createContextMiddleware } from "@ctxprotocol/sdk";
 

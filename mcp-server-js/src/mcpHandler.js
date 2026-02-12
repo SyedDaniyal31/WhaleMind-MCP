@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   TOOL_DEFINITIONS,
+  coerceToOutputSchema,
   runWhaleIntelReport,
   runCompareWhales,
   runWhaleRiskSnapshot,
@@ -68,17 +69,46 @@ function ensureObject(o) {
 
 function successResult(data, toolName) {
   const plain = ensureObject(data);
+  const structuredContent = coerceToOutputSchema(toolName, plain);
   return {
-    content: [{ type: "text", text: JSON.stringify(plain, null, 2) }],
-    structuredContent: plain,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent,
   };
 }
 
+/** Error structuredContent must match each tool's outputSchema types exactly (numbers not strings). */
 function errorResult(toolName, msg, ctx = {}) {
-  const schema = toolName === "compare_whales" ? { comparison_summary: msg } : { address: ctx?.address ?? "", agent_summary: msg, one_line_rationale: msg };
+  let structuredContent;
+  if (toolName === "whale_intel_report") {
+    structuredContent = {
+      address: String(ctx?.address ?? ""),
+      risk_level: "MEDIUM",
+      copy_trade_signal: "NEUTRAL",
+      total_txs: 0,
+      total_in_eth: 0,
+      total_out_eth: 0,
+      unique_counterparties: 0,
+      agent_summary: String(msg),
+    };
+  } else if (toolName === "compare_whales") {
+    structuredContent = {
+      wallets: [],
+      ranking: [],
+      best_for_copy_trading: null,
+      comparison_summary: String(msg),
+    };
+  } else {
+    structuredContent = {
+      address: String(ctx?.address ?? ""),
+      risk_level: "MEDIUM",
+      copy_trade_signal: "NEUTRAL",
+      one_line_rationale: String(msg),
+      agent_summary: String(msg),
+    };
+  }
   return {
     content: [{ type: "text", text: msg }],
-    structuredContent: ensureObject(schema),
+    structuredContent: ensureObject(structuredContent),
     isError: true,
   };
 }

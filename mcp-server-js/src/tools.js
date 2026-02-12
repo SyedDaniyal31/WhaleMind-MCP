@@ -13,7 +13,12 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       properties: {
-        address: { type: "string", description: "Ethereum address (0x...)" },
+        address: {
+          type: "string",
+          description: "Ethereum address (0x...)",
+          default: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+          examples: ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
+        },
         limit: { type: "number", description: "Max transactions to analyze", default: 50 },
       },
       required: ["address"],
@@ -45,7 +50,13 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       properties: {
-        addresses: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 5 },
+        addresses: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 2,
+          maxItems: 5,
+          examples: [["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"]],
+        },
       },
       required: ["addresses"],
     },
@@ -65,7 +76,14 @@ export const TOOL_DEFINITIONS = [
     description: "Quick risk and copy-trade signal for one wallet.",
     inputSchema: {
       type: "object",
-      properties: { address: { type: "string", description: "Ethereum address (0x...)" } },
+      properties: {
+        address: {
+          type: "string",
+          description: "Ethereum address (0x...)",
+          default: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+          examples: ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
+        },
+      },
       required: ["address"],
     },
     outputSchema: {
@@ -239,6 +257,65 @@ function ensureObject(o) {
   return JSON.parse(JSON.stringify(o));
 }
 
+/** Coerce to outputSchema types so structuredContent never fails validation (Context/disputes). */
+function toNumber(v) {
+  if (typeof v === "number" && !Number.isNaN(v)) return v;
+  const n = Number(v);
+  return Number.isNaN(n) ? 0 : n;
+}
+function toStringOrNull(v) {
+  if (v == null) return null;
+  return String(v);
+}
+
+/**
+ * Coerce a tool result to match outputSchema types exactly. Call before returning
+ * structuredContent so responses never fail schema validation (avoid disputes).
+ */
+export function coerceToOutputSchema(toolName, data) {
+  const d = ensureObject(data);
+  if (toolName === "whale_intel_report") {
+    return {
+      address: String(d.address ?? ""),
+      ...(d.verdict != null && { verdict: String(d.verdict) }),
+      ...(typeof d.confidence === "number" && !Number.isNaN(d.confidence) && { confidence: d.confidence }),
+      risk_level: String(d.risk_level ?? "MEDIUM"),
+      copy_trade_signal: String(d.copy_trade_signal ?? "NEUTRAL"),
+      total_txs: toNumber(d.total_txs),
+      total_in_eth: toNumber(d.total_in_eth),
+      total_out_eth: toNumber(d.total_out_eth),
+      unique_counterparties: toNumber(d.unique_counterparties),
+      balance_wei: d.balance_wei == null ? null : String(d.balance_wei),
+      agent_summary: String(d.agent_summary ?? ""),
+      first_seen_iso: d.first_seen_iso == null ? null : String(d.first_seen_iso),
+      last_seen_iso: d.last_seen_iso == null ? null : String(d.last_seen_iso),
+    };
+  }
+  if (toolName === "compare_whales") {
+    const wallets = Array.isArray(d.wallets)
+      ? d.wallets.map((w) => (w != null && typeof w === "object" ? ensureObject(w) : {}))
+      : [];
+    return {
+      wallets,
+      ranking: Array.isArray(d.ranking) ? d.ranking.map((x) => String(x)) : [],
+      best_for_copy_trading: d.best_for_copy_trading == null ? null : String(d.best_for_copy_trading),
+      comparison_summary: String(d.comparison_summary ?? ""),
+    };
+  }
+  if (toolName === "whale_risk_snapshot") {
+    return {
+      address: String(d.address ?? ""),
+      ...(d.verdict != null && { verdict: String(d.verdict) }),
+      ...(typeof d.confidence === "number" && !Number.isNaN(d.confidence) && { confidence: d.confidence }),
+      risk_level: String(d.risk_level ?? "MEDIUM"),
+      copy_trade_signal: String(d.copy_trade_signal ?? "NEUTRAL"),
+      one_line_rationale: String(d.one_line_rationale ?? ""),
+      agent_summary: String(d.agent_summary ?? ""),
+    };
+  }
+  return d;
+}
+
 export async function runWhaleIntelReport(addr, limit = 50) {
   const [txs, analyze, balance] = await Promise.all([
     fetchTransactions(addr, limit),
@@ -252,23 +329,24 @@ export async function runWhaleIntelReport(addr, limit = 50) {
   const summary =
     `Whale ${addr.slice(0, 10)}…: ${v || "on-chain only"}. ${i.copy_trade_signal}. ` +
     (analyze?.summary ? analyze.summary.slice(0, 100) + "…" : `${m.total_txs} txs, ${m.unique_counterparties} counterparties.`);
-  return ensureObject({
-    address: addr,
-    risk_level: i.risk_level ?? "MEDIUM",
-    copy_trade_signal: i.copy_trade_signal ?? "NEUTRAL",
-    total_txs: m.total_txs ?? 0,
-    total_in_eth: m.total_in_eth ?? 0,
-    total_out_eth: m.total_out_eth ?? 0,
-    unique_counterparties: m.unique_counterparties ?? 0,
-    agent_summary: summary ?? "",
-    ...(v != null && { verdict: v }),
-    ...(typeof c === "number" && { confidence: c }),
-    ...(analyze?.entity_type && { entity_type: analyze.entity_type }),
-    ...(analyze?.summary && { summary: analyze.summary }),
-    balance_wei: balance != null ? String(balance) : null,
-    first_seen_iso: m.first_seen_iso ?? null,
-    last_seen_iso: m.last_seen_iso ?? null,
-  });
+  const out = {
+    address: String(addr ?? ""),
+    risk_level: String(i.risk_level ?? "MEDIUM"),
+    copy_trade_signal: String(i.copy_trade_signal ?? "NEUTRAL"),
+    total_txs: toNumber(m.total_txs),
+    total_in_eth: toNumber(m.total_in_eth),
+    total_out_eth: toNumber(m.total_out_eth),
+    unique_counterparties: toNumber(m.unique_counterparties),
+    agent_summary: String(summary ?? ""),
+    balance_wei: toStringOrNull(balance),
+    first_seen_iso: toStringOrNull(m.first_seen_iso),
+    last_seen_iso: toStringOrNull(m.last_seen_iso),
+  };
+  if (v != null) out.verdict = String(v);
+  if (typeof c === "number" && !Number.isNaN(c)) out.confidence = c;
+  if (analyze?.entity_type) out.entity_type = String(analyze.entity_type);
+  if (analyze?.summary) out.summary = String(analyze.summary);
+  return ensureObject(out);
 }
 
 export async function runCompareWhales(addrs) {
@@ -281,12 +359,12 @@ export async function runCompareWhales(addrs) {
       const c = an?.confidence;
       const i = v != null ? fromVerdict(v, c) : fromMetrics(m);
       return {
-        address: a ?? "",
-        ...(v != null && { verdict: v }),
-        ...(typeof c === "number" && { confidence: c }),
-        smart_money_score: i.smart_money_score ?? 0,
-        copy_trade_signal: i.copy_trade_signal ?? "NEUTRAL",
-        total_txs: m.total_txs ?? 0,
+        address: String(a ?? ""),
+        ...(v != null && { verdict: String(v) }),
+        ...(typeof c === "number" && !Number.isNaN(c) && { confidence: c }),
+        smart_money_score: toNumber(i.smart_money_score),
+        copy_trade_signal: String(i.copy_trade_signal ?? "NEUTRAL"),
+        total_txs: toNumber(m.total_txs),
       };
     })
   );
@@ -297,9 +375,9 @@ export async function runCompareWhales(addrs) {
     : `Ranked: ${by.map((w) => `${w.address.slice(0, 8)}…=${w.smart_money_score}`).join(", ")}.`;
   return ensureObject({
     wallets: results,
-    ranking: by.map((w) => w.address),
-    best_for_copy_trading: best ?? null,
-    comparison_summary: cmp,
+    ranking: by.map((w) => String(w.address)),
+    best_for_copy_trading: best != null ? String(best) : null,
+    comparison_summary: String(cmp),
   });
 }
 
@@ -313,13 +391,14 @@ export async function runWhaleRiskSnapshot(addr) {
   const c = analyze?.confidence;
   const i = v != null ? fromVerdict(v, c) : fromMetrics(m);
   const ln = v ? `${i.copy_trade_signal}: ${v}, confidence ${Math.round((c || 0) * 100)}%.` : `${i.copy_trade_signal}: risk ${i.risk_level}, on-chain metrics.`;
-  return ensureObject({
-    address: addr,
-    risk_level: i.risk_level ?? "MEDIUM",
-    copy_trade_signal: i.copy_trade_signal ?? "NEUTRAL",
-    one_line_rationale: ln ?? "",
-    agent_summary: `${i.copy_trade_signal}: ${addr.slice(0, 10)}… — ${ln}`,
-    ...(v != null && { verdict: v }),
-    ...(typeof c === "number" && { confidence: c }),
-  });
+  const out = {
+    address: String(addr ?? ""),
+    risk_level: String(i.risk_level ?? "MEDIUM"),
+    copy_trade_signal: String(i.copy_trade_signal ?? "NEUTRAL"),
+    one_line_rationale: String(ln ?? ""),
+    agent_summary: String(`${i.copy_trade_signal}: ${addr.slice(0, 10)}… — ${ln}`),
+  };
+  if (v != null) out.verdict = String(v);
+  if (typeof c === "number" && !Number.isNaN(c)) out.confidence = c;
+  return ensureObject(out);
 }

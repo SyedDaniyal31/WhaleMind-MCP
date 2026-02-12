@@ -8,14 +8,16 @@ A standard MCP server that provides whale and smart-money intelligence for Ether
 
 Context requires `outputSchema` and `structuredContent` from the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#output-schema) for payment verification and dispute resolution.
 
-1. **`outputSchema`** in tool definitions — Defines the structure of response data (we use Zod; the MCP SDK converts to JSON Schema).
-2. **`structuredContent`** in responses — Machine-readable data that exactly matches the outputSchema.
+1. **`outputSchema`** in tool definitions — Defines the structure of response data (JSON Schema in tool definitions).
+2. **`structuredContent`** in responses — Machine-readable data that exactly matches the outputSchema (types must match: e.g. `number` not `"42"` to avoid disputes).
+
+All responses are passed through `coerceToOutputSchema(toolName, data)` so numeric and string types always match the schema. Test responses against your schema before deploying.
 
 ```javascript
 // Every tool returns (required by Context)
 return {
-  content: [{ type: "text", text: JSON.stringify(data) }],
-  structuredContent: data,  // must match outputSchema
+  content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+  structuredContent: coerceToOutputSchema(toolName, data),  // types match outputSchema
 };
 ```
 
