@@ -89,6 +89,17 @@ function errorResult(toolName, msg, ctx = {}) {
       total_out_eth: 0,
       unique_counterparties: 0,
       agent_summary: String(msg),
+      entity_cluster: {
+        cluster_id: null,
+        confidence: 0,
+        connected_wallets: [],
+        signals_used: [],
+      },
+      behavioral_profile: {
+        type: "Individual Whale",
+        confidence: 0,
+        reasoning: [],
+      },
     };
   } else if (toolName === "compare_whales") {
     structuredContent = {
