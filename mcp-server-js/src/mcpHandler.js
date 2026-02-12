@@ -38,7 +38,7 @@ function createToolHandler() {
       switch (name) {
         case "whale_intel_report": {
           const addr = (args?.address ?? "").trim();
-          const limit = typeof args?.limit === "number" ? args.limit : 50;
+          const limit = typeof args?.limit === "number" ? args.limit : 2000;
           if (!addr || !addr.startsWith("0x")) return errorResult("whale_intel_report", "Invalid address", { address: addr || "" });
           return successResult(await runWhaleIntelReport(addr, limit), name);
         }
@@ -80,6 +80,13 @@ function successResult(data, toolName) {
 function errorResult(toolName, msg, ctx = {}) {
   let structuredContent;
   if (toolName === "whale_intel_report") {
+    const emptyFeatureSummary = {
+      activity_metrics: { wallet_age_days: 0, active_days_ratio: 0, avg_tx_per_day: 0, tx_frequency_std_dev: 0 },
+      volume_metrics: { lifetime_volume_eth: 0, avg_tx_size: 0, median_tx_size: 0, max_single_tx: 0 },
+      network_metrics: { unique_counterparties: 0, repeat_counterparty_ratio: 0, top_5_counterparty_share: 0 },
+      behavioral_metrics: { dex_interaction_ratio: 0, cex_interaction_ratio: 0, contract_call_ratio: 0, same_block_multi_tx_count: 0 },
+      temporal_metrics: { burst_activity_score: 0, weekly_activity_pattern: [0, 0, 0, 0, 0, 0, 0] },
+    };
     structuredContent = {
       address: String(ctx?.address ?? ""),
       risk_level: "MEDIUM",
@@ -89,6 +96,21 @@ function errorResult(toolName, msg, ctx = {}) {
       total_out_eth: 0,
       unique_counterparties: 0,
       agent_summary: String(msg),
+      entity_type: "Unknown",
+      confidence_score: 0,
+      confidence_reasons: [],
+      cluster_data: {
+        cluster_id: null,
+        cluster_size: 0,
+        related_wallets: [],
+        cluster_confidence: 0,
+      },
+      risk_profile: {
+        market_impact_risk: { score: 0.5, label: "MEDIUM" },
+        counterparty_risk: { score: 0.5, label: "MEDIUM" },
+        behavioral_risk: { score: 0.5, label: "MEDIUM" },
+      },
+      feature_summary: emptyFeatureSummary,
       entity_cluster: {
         cluster_id: null,
         confidence: 0,
@@ -96,7 +118,7 @@ function errorResult(toolName, msg, ctx = {}) {
         signals_used: [],
       },
       behavioral_profile: {
-        type: "Individual Whale",
+        type: "Unknown",
         confidence: 0,
         reasoning: [],
       },

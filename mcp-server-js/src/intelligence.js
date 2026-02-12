@@ -1,51 +1,36 @@
 /**
- * Wallet intelligence engine — entity clustering and behavioral profiling.
+ * Wallet intelligence engine — funding analysis and coordination detection.
  * Heuristic-based, deterministic, explainable. No ML.
+ * Known labels (CEX, DEX) from knownLabels.js.
  */
 
 import { createHash } from "node:crypto";
-
-// ─── Known-address heuristics (short list; production could use external labels) ───
-const KNOWN_CEX_AND_BRIDGES = new Set([
-  "0x28c6c06298d514db089934071355e5743bf21d60", // Binance 14
-  "0x21a31ee1afc51d94c2efccaa2092ad1028285549", // Binance
-  "0xdfd5293d8e347dfe59e90efd55b2956a1343963d", // Binance
-  "0x56eddb7aa87536c09ccc2793473599fd21a8d17a", // Binance 8
-  "0xbe0eb53f46cd790cd13851d5eff43d12404d33e8", // Binance 7
-  "0xf977814e90da44bfa03b6295a0616a897441acec", // Binance hot
-  "0x47ac0fb4f2d84898e4d9e7b4dab3c24507a6d503", // Binance
-  "0x876eabf441b2ee5b5b0554fd502a8e0600950cfa", // Bitfinex
-  "0x1151314c646ce4e0efd76d1af4760ae66a9fe30f", // FTX
-  "0x2faf487a4414fe77e2327f0bf4ae2a264a776ad2", // FTX
-  "0xc098b2a3aa256d2140208c3de6543aaef5cd3a94", // Multichain bridge
-  "0x40ec5b33f54e0e8a33a975908c5ba1c14e5bbbdf", // Polygon bridge
-  "0xa0c68c638235ee32657e8f720a23cec1bfc77c77", // Polygon ERC20 bridge
-].map((a) => a.toLowerCase()));
-
-// DEX routers / common MEV-related contracts (heuristic)
-const KNOWN_DEX_OR_MEV = new Set([
-  "0x7a250d5630b4cf539739df2c5dacb4c659f2488d", // Uniswap V2 Router
-  "0xe592427a0aece92de3edee1f18e0157c05861564", // Uniswap V3 Router
-  "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", // Uniswap V3 Router 2
-  "0xef1c6e67703c7bd7107eed8303fbe6ec2554bf6b", // Uniswap Universal Router
-  "0xdef1c0ded9bec7f1a1670819833240f027b25eff", // 0x Exchange
-  "0x1111111254eeb25477b68fb85ed929f73a960582", // 1inch V5
-  "0x111111125421ca6dc452d289314280a0f8842a65", // 1inch V4
-  "0x880a8439ad9dc2b227b2c22f6f2bd4e2f2e6b0a", // Common sandwich router (example)
-].map((a) => a.toLowerCase()));
+import { KNOWN_CEX_AND_BRIDGES, KNOWN_DEX_ROUTERS } from "./knownLabels.js";
 
 // Minimum ETH to consider "large" (whale/fund-like)
 const LARGE_TX_ETH = 50;
 // Small deposit threshold (CEX hot wallet pattern)
 const SMALL_DEPOSIT_ETH = 2;
-// Time window for "same timeframe" funding (seconds)
-const FUNDING_TIME_WINDOW = 86400 * 2; // 2 days
 // Time window for temporal coordination (seconds)
 const COORDINATION_WINDOW = 600; // 10 minutes
-// Min txs in short window to consider "high frequency" / MEV
-const HIGH_FREQ_MIN_TXS = 15;
-// Min txs for CEX hot wallet
-const CEX_HOT_MIN_TXS = 100;
+
+// ─── STRICT classification thresholds (minimize false positives) ───
+const CEX_MIN_TXS = 1001;
+const CEX_MIN_COUNTERPARTIES = 201;
+const CEX_MIN_VOLUME_ETH = 5000;
+const CEX_MIN_ACTIVITY_MONTHS = 6;
+
+const LOW_ACTIVITY_MAX_TXS = 200;
+const LOW_ACTIVITY_MAX_COUNTERPARTIES = 50;
+const LOW_VOLUME_ETH = 500; // below this = "low volume" for Unknown Entity
+
+const MEV_MIN_DEX_INTERACTIONS = 8;
+const MEV_MIN_SAME_BLOCK_TXS = 2; // at least one block with 2+ txs from this wallet
+const GAS_SPIKE_MULTIPLIER = 1.5; // gas above median * this = spike vs "network"
+
+const CONFIDENCE_PENALTY_LIMITED_HISTORY_TXS = 500;
+const CONFIDENCE_PENALTY_LOW_VOLUME_ETH = 1000;
+const CONFIDENCE_PENALTY_MIN_ACTIVITY_MONTHS = 3;
 
 /**
  * Analyze funding sources: who sent money to this wallet.
@@ -171,12 +156,14 @@ export function detectCoordination(txs, internalTxs, address) {
 }
 
 /**
- * Behavioral similarity metrics from tx list: gas strategy, timing, contract usage.
+ * Behavioral similarity metrics from tx list: gas strategy, timing, contract usage,
+ * same-block patterns, gas spikes. Used for MEV and confidence penalties.
  */
 function behavioralMetrics(txs, address) {
   const low = (address || "").toLowerCase();
   const gasPrices = [];
   const timestamps = [];
+  const blockCounts = new Map(); // blockNumber -> count of txs from this wallet
   let contractInteractionCount = 0;
   let dexOrMevInteractionCount = 0;
   let largeTxCount = 0;
@@ -195,13 +182,16 @@ function behavioralMetrics(txs, address) {
     const to = (tx.to || "").toLowerCase();
     const valueEth = toEth(tx.value);
     const ts = parseInt(tx.timeStamp, 10);
+    const block = tx.blockNumber != null ? String(tx.blockNumber) : null;
     if (!Number.isNaN(ts)) timestamps.push(ts);
+    if (from === low && block) {
+      blockCounts.set(block, (blockCounts.get(block) || 0) + 1);
+    }
     const gp = parseInt(tx.gasPrice, 10) || 0;
     if (gp > 0) gasPrices.push(gp);
-    // Contract: has input data and/or to is not in our "EOA" heuristic (long input = contract call)
     const hasInput = tx.input && tx.input.length > 10;
     if (to && hasInput) contractInteractionCount++;
-    if (KNOWN_DEX_OR_MEV.has(to)) dexOrMevInteractionCount++;
+    if (KNOWN_DEX_ROUTERS.has(to)) dexOrMevInteractionCount++;
     if (valueEth >= LARGE_TX_ETH) largeTxCount++;
     if (from !== low && to === low && valueEth > 0 && valueEth <= SMALL_DEPOSIT_ETH) smallInboundCount++;
     if (to === low) totalInboundEth += valueEth;
@@ -221,6 +211,15 @@ function behavioralMetrics(txs, address) {
       })()
     : 0;
 
+  const sameBlockCounts = Array.from(blockCounts.values());
+  const maxSameBlock = sameBlockCounts.length ? Math.max(...sameBlockCounts) : 0;
+  const hasSameBlockMultiTx = maxSameBlock >= MEV_MIN_SAME_BLOCK_TXS;
+
+  const sortedGas = [...gasPrices].sort((a, b) => a - b);
+  const medianGas = sortedGas.length ? sortedGas[Math.floor(sortedGas.length / 2)] : 0;
+  const gasSpikeThreshold = medianGas * GAS_SPIKE_MULTIPLIER;
+  const hasGasSpikes = gasPrices.length >= 5 && gasPrices.filter((g) => g >= gasSpikeThreshold).length >= 2;
+
   return {
     totalTxs: (txs || []).length,
     gasPriceCount: gasPrices.length,
@@ -232,63 +231,126 @@ function behavioralMetrics(txs, address) {
     totalInboundEth,
     avgIntervalSeconds: Math.round(avgInterval),
     hasBurstTiming: intervals.some((d) => d <= 60) && intervals.length >= 5,
+    hasSameBlockMultiTx,
+    hasGasSpikes,
+    medianGasPrice: medianGas,
   };
 }
 
+/** Activity span in months from first_seen_iso and last_seen_iso. Returns 0 if missing. */
+function activitySpanMonths(firstIso, lastIso) {
+  if (!firstIso || !lastIso) return 0;
+  try {
+    const first = new Date(firstIso).getTime();
+    const last = new Date(lastIso).getTime();
+    if (Number.isNaN(first) || Number.isNaN(last) || last <= first) return 0;
+    return (last - first) / (1000 * 60 * 60 * 24 * 30.44);
+  } catch {
+    return 0;
+  }
+}
+
+/** Apply confidence penalties for limited history, low volume, short activity window. */
+function applyConfidencePenalties(baseConfidence, summary, reasoning) {
+  let c = baseConfidence;
+  if (summary.total_txs < CONFIDENCE_PENALTY_LIMITED_HISTORY_TXS) {
+    c -= 0.15;
+    reasoning.push("limited_tx_history");
+  }
+  const volume = (summary.total_in_eth || 0) + (summary.total_out_eth || 0);
+  if (volume < CONFIDENCE_PENALTY_LOW_VOLUME_ETH) {
+    c -= 0.1;
+    reasoning.push("low_volume");
+  }
+  const months = activitySpanMonths(summary.first_seen_iso, summary.last_seen_iso);
+  if (months < CONFIDENCE_PENALTY_MIN_ACTIVITY_MONTHS && months > 0) {
+    c -= 0.1;
+    reasoning.push("recent_only_activity");
+  }
+  return Math.max(0.1, Math.min(1, c));
+}
+
 /**
- * Classify wallet behavior: CEX Hot Wallet, MEV Bot, Fund-like, Individual Whale.
- * Deterministic rules, returns type, confidence (0–1), reasoning array.
+ * Classify wallet behavior with STRICT rules to minimize false positives.
+ * Returns type, confidence (0–1), reasoning array.
+ * When unsure → "Unclassified".
+ *
+ * @param {Array} txs - Normal transactions (used for behavioral metrics)
+ * @param {Object} fundingAnalysis - From analyzeFundingSources
+ * @param {Object} coordination - From detectCoordination
+ * @param {string} address - Wallet address
+ * @param {Object} summary - { total_txs, unique_counterparties, total_in_eth, total_out_eth, first_seen_iso, last_seen_iso }
  */
-export function classifyBehavior(txs, fundingAnalysis, coordination, address) {
+export function classifyBehavior(txs, fundingAnalysis, coordination, address, summary = {}) {
   const m = behavioralMetrics(txs, address);
   const reasoning = [];
-  let type = "Individual Whale";
-  let confidence = 0.5;
+  const totalTxs = summary.total_txs ?? m.totalTxs;
+  const uniqueCounterparties = summary.unique_counterparties ?? 0;
+  const totalIn = Number(summary.total_in_eth) || 0;
+  const totalOut = Number(summary.total_out_eth) || 0;
+  const volumeEth = totalIn + totalOut;
+  const activityMonths = activitySpanMonths(summary.first_seen_iso, summary.last_seen_iso);
 
-  // CEX Hot Wallet: very high tx count, many small inbound, known exchange interaction
-  const hasKnownExchange = (fundingAnalysis?.cexOrBridgeFunders?.length || 0) > 0;
-  const cexScore =
-    (m.totalTxs >= CEX_HOT_MIN_TXS ? 0.4 : m.totalTxs >= 50 ? 0.2 : 0) +
-    (m.smallInboundCount >= 20 ? 0.3 : m.smallInboundCount >= 5 ? 0.15 : 0) +
-    (hasKnownExchange ? 0.3 : 0);
-  if (cexScore >= 0.5) {
-    type = "CEX Hot Wallet";
-    confidence = Math.min(0.95, 0.5 + cexScore * 0.4);
-    reasoning.push("high_tx_count", "many_small_inbound_deposits");
-    if (hasKnownExchange) reasoning.push("known_exchange_interaction");
-    return { type, confidence, reasoning };
+  // ─── 1) CEX: ONLY if ALL strict thresholds are met; otherwise DO NOT label CEX ───
+  const cexTxsOk = totalTxs > CEX_MIN_TXS;
+  const cexCounterpartiesOk = uniqueCounterparties > CEX_MIN_COUNTERPARTIES;
+  const cexVolumeOk = volumeEth > CEX_MIN_VOLUME_ETH;
+  const cexActivityOk = activityMonths >= CEX_MIN_ACTIVITY_MONTHS;
+  if (cexTxsOk && cexCounterpartiesOk && cexVolumeOk && cexActivityOk) {
+    const hasKnownExchange = (fundingAnalysis?.cexOrBridgeFunders?.length || 0) > 0;
+    if (hasKnownExchange) {
+      let confidence = 0.75;
+      reasoning.push("high_tx_count", "high_counterparties", "high_volume", "long_activity", "known_exchange_interaction");
+      confidence = applyConfidencePenalties(confidence, summary, reasoning);
+      return { type: "CEX Hot Wallet", confidence, reasoning };
+    }
   }
 
-  // MEV Bot: high frequency, DEX router interaction, sandwich-like (burst) timing
-  const mevScore =
-    (m.totalTxs >= HIGH_FREQ_MIN_TXS ? 0.35 : m.totalTxs >= 8 ? 0.15 : 0) +
-    (m.dexOrMevInteractionCount >= 5 ? 0.35 : m.dexOrMevInteractionCount >= 1 ? 0.2 : 0) +
-    (m.hasBurstTiming ? 0.3 : 0);
-  if (mevScore >= 0.5) {
-    type = "MEV Bot";
-    confidence = Math.min(0.95, 0.5 + mevScore * 0.4);
-    reasoning.push("high_frequency_txs", "dex_router_interaction");
-    if (m.hasBurstTiming) reasoning.push("sandwich_like_timing");
-    return { type, confidence, reasoning };
+  // ─── 2) Low activity → Individual Whale / Unknown Entity ───
+  if (
+    totalTxs < LOW_ACTIVITY_MAX_TXS &&
+    uniqueCounterparties < LOW_ACTIVITY_MAX_COUNTERPARTIES &&
+    volumeEth < LOW_VOLUME_ETH
+  ) {
+    reasoning.push("low_tx_count", "low_counterparties", "low_volume");
+    let confidence = 0.5;
+    confidence = applyConfidencePenalties(confidence, summary, reasoning);
+    return { type: "Individual Whale / Unknown Entity", confidence, reasoning };
   }
 
-  // Fund / Whale: large value txs, low frequency, possibly bridge usage
-  const fundScore =
-    (m.largeTxCount >= 2 ? 0.4 : m.largeTxCount >= 1 ? 0.2 : 0) +
-    (m.totalTxs <= 30 && m.totalTxs >= 1 ? 0.3 : m.totalTxs <= 100 ? 0.15 : 0) +
-    (hasKnownExchange ? 0.2 : 0); // bridge/CEX as proxy for "cross-chain"
-  if (fundScore >= 0.5) {
-    type = "Fund-like";
-    confidence = Math.min(0.9, 0.5 + fundScore * 0.35);
+  // ─── 3) MEV: requires repeated DEX interaction + same-block multi-tx + gas spikes ───
+  const mevDexOk = m.dexOrMevInteractionCount >= MEV_MIN_DEX_INTERACTIONS;
+  const mevSameBlockOk = m.hasSameBlockMultiTx;
+  const mevGasOk = m.hasGasSpikes;
+  if (mevDexOk && mevSameBlockOk && mevGasOk) {
+    reasoning.push("repeated_dex_router_interaction", "same_block_multi_tx", "gas_price_spikes");
+    let confidence = 0.7;
+    confidence = applyConfidencePenalties(confidence, summary, reasoning);
+    return { type: "MEV Bot", confidence, reasoning };
+  }
+
+  // ─── 4) Fund-like: large txs, low frequency, sufficient history (avoid guessing) ───
+  if (m.largeTxCount >= 2 && totalTxs <= 80 && totalTxs >= 5 && activityMonths >= 2) {
+    const hasKnownExchange = (fundingAnalysis?.cexOrBridgeFunders?.length || 0) > 0;
     reasoning.push("large_value_txs", "low_frequency");
     if (hasKnownExchange) reasoning.push("bridge_or_cex_usage");
-    return { type, confidence, reasoning };
+    let confidence = 0.55;
+    confidence = applyConfidencePenalties(confidence, summary, reasoning);
+    if (confidence >= 0.4) return { type: "Fund-like", confidence, reasoning };
   }
 
-  // Default: Individual Whale — medium tx count, large holdings, no strong automation signals
-  reasoning.push("medium_tx_count", "no_automation_patterns");
-  confidence = 0.55;
-  return { type, confidence, reasoning };
+  // ─── 5) When unsure → Unclassified (minimize false positives) ───
+  if (totalTxs < 100 || volumeEth < 200) {
+    reasoning.push("insufficient_data", "avoid_false_positive");
+    const confidence = Math.max(0.15, 0.5 - (100 - totalTxs) / 500);
+    return { type: "Unclassified", confidence, reasoning };
+  }
+
+  // Default: Individual Whale / Unknown Entity with penalties
+  reasoning.push("no_strong_pattern", "default_conservative");
+  let confidence = 0.45;
+  confidence = applyConfidencePenalties(confidence, summary, reasoning);
+  return { type: "Individual Whale / Unknown Entity", confidence, reasoning };
 }
 
 /**

@@ -1,13 +1,16 @@
 /**
- * WhaleMind MCP tools — wallet intelligence + attribution engine.
- * Entity clustering and behavioral profiling (heuristic-based).
+ * WhaleMind MCP tools — Tier-S on-chain intelligence engine.
+ * Feature extraction → classification → confidence → clustering → risk. Rule-based, explainable.
  */
 import {
   analyzeFundingSources,
   detectCoordination,
-  classifyBehavior,
-  buildEntityCluster,
 } from "./intelligence.js";
+import { extractFeatures } from "./featureExtraction.js";
+import { classifyEntity } from "./classificationEngine.js";
+import { computeConfidence } from "./confidenceEngine.js";
+import { buildClusterData } from "./clustering.js";
+import { computeRiskProfile } from "./riskScoring.js";
 
 const ETHERSCAN_BASE = "https://api.etherscan.io/v2/api";
 const WEI_PER_ETH = 1e18;
@@ -28,13 +31,13 @@ export const TOOL_DEFINITIONS = [
           default: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
           examples: ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"],
         },
-        limit: { type: "number", description: "Max transactions to analyze", default: 50 },
+        limit: { type: "number", description: "Max transactions to analyze (min 2000 for strict CEX/MEV classification)", default: 2000 },
       },
       required: ["address"],
     },
     outputSchema: {
       type: "object",
-      description: "Whale intelligence report with entity cluster and behavioral profile",
+      description: "Tier-S whale intelligence: entity_type, confidence, cluster_data, risk_profile, feature_summary",
       properties: {
         address: { type: "string" },
         verdict: { type: "string" },
@@ -49,6 +52,38 @@ export const TOOL_DEFINITIONS = [
         agent_summary: { type: "string" },
         first_seen_iso: { type: ["string", "null"] },
         last_seen_iso: { type: ["string", "null"] },
+        entity_type: { type: "string" },
+        confidence_score: { type: "number" },
+        confidence_reasons: { type: "array", items: { type: "string" } },
+        cluster_data: {
+          type: "object",
+          properties: {
+            cluster_id: { type: ["string", "null"] },
+            cluster_size: { type: "number" },
+            related_wallets: { type: "array", items: { type: "string" } },
+            cluster_confidence: { type: "number" },
+          },
+          required: ["cluster_id", "cluster_size", "related_wallets", "cluster_confidence"],
+        },
+        risk_profile: {
+          type: "object",
+          properties: {
+            market_impact_risk: { type: "object", properties: { score: { type: "number" }, label: { type: "string" } } },
+            counterparty_risk: { type: "object", properties: { score: { type: "number" }, label: { type: "string" } } },
+            behavioral_risk: { type: "object", properties: { score: { type: "number" }, label: { type: "string" } } },
+          },
+          required: ["market_impact_risk", "counterparty_risk", "behavioral_risk"],
+        },
+        feature_summary: {
+          type: "object",
+          properties: {
+            activity_metrics: { type: "object" },
+            volume_metrics: { type: "object" },
+            network_metrics: { type: "object" },
+            behavioral_metrics: { type: "object" },
+            temporal_metrics: { type: "object" },
+          },
+        },
         entity_cluster: {
           type: "object",
           properties: {
@@ -78,6 +113,12 @@ export const TOOL_DEFINITIONS = [
         "total_out_eth",
         "unique_counterparties",
         "agent_summary",
+        "entity_type",
+        "confidence_score",
+        "confidence_reasons",
+        "cluster_data",
+        "risk_profile",
+        "feature_summary",
         "entity_cluster",
         "behavioral_profile",
       ],
@@ -345,6 +386,9 @@ export function coerceToOutputSchema(toolName, data) {
   if (toolName === "whale_intel_report") {
     const ec = d.entity_cluster && typeof d.entity_cluster === "object" ? d.entity_cluster : {};
     const bp = d.behavioral_profile && typeof d.behavioral_profile === "object" ? d.behavioral_profile : {};
+    const cd = d.cluster_data && typeof d.cluster_data === "object" ? d.cluster_data : {};
+    const rp = d.risk_profile && typeof d.risk_profile === "object" ? d.risk_profile : {};
+    const fs = d.feature_summary && typeof d.feature_summary === "object" ? d.feature_summary : {};
     return {
       address: String(d.address ?? ""),
       ...(d.verdict != null && { verdict: String(d.verdict) }),
@@ -359,6 +403,21 @@ export function coerceToOutputSchema(toolName, data) {
       agent_summary: String(d.agent_summary ?? ""),
       first_seen_iso: d.first_seen_iso == null ? null : String(d.first_seen_iso),
       last_seen_iso: d.last_seen_iso == null ? null : String(d.last_seen_iso),
+      entity_type: String(d.entity_type ?? "Unknown"),
+      confidence_score: toNumber(d.confidence_score),
+      confidence_reasons: Array.isArray(d.confidence_reasons) ? d.confidence_reasons.map(String) : [],
+      cluster_data: {
+        cluster_id: cd.cluster_id == null ? null : String(cd.cluster_id),
+        cluster_size: toNumber(cd.cluster_size),
+        related_wallets: Array.isArray(cd.related_wallets) ? cd.related_wallets.map(String) : [],
+        cluster_confidence: toNumber(cd.cluster_confidence),
+      },
+      risk_profile: {
+        market_impact_risk: { score: toNumber(rp.market_impact_risk?.score), label: String(rp.market_impact_risk?.label ?? "MEDIUM") },
+        counterparty_risk: { score: toNumber(rp.counterparty_risk?.score), label: String(rp.counterparty_risk?.label ?? "MEDIUM") },
+        behavioral_risk: { score: toNumber(rp.behavioral_risk?.score), label: String(rp.behavioral_risk?.label ?? "MEDIUM") },
+      },
+      feature_summary: ensureObject(fs),
       entity_cluster: {
         cluster_id: ec.cluster_id == null ? null : String(ec.cluster_id),
         confidence: toNumber(ec.confidence),
@@ -366,7 +425,7 @@ export function coerceToOutputSchema(toolName, data) {
         signals_used: Array.isArray(ec.signals_used) ? ec.signals_used.map(String) : [],
       },
       behavioral_profile: {
-        type: String(bp.type ?? "Individual Whale"),
+        type: String(bp.type ?? "Unknown"),
         confidence: toNumber(bp.confidence),
         reasoning: Array.isArray(bp.reasoning) ? bp.reasoning.map(String) : [],
       },
@@ -397,7 +456,7 @@ export function coerceToOutputSchema(toolName, data) {
   return d;
 }
 
-export async function runWhaleIntelReport(addr, limit = 50) {
+export async function runWhaleIntelReport(addr, limit = 2000) {
   const [txs, internalTxs, analyze, balance] = await Promise.all([
     fetchTransactions(addr, limit),
     fetchInternalTransactions(addr),
@@ -409,15 +468,21 @@ export async function runWhaleIntelReport(addr, limit = 50) {
   const c = analyze?.confidence;
   const i = v != null ? fromVerdict(v, c) : fromMetrics(m);
 
+  const features = extractFeatures(txs, internalTxs, addr);
   const funding = analyzeFundingSources(txs, internalTxs, addr);
   const coordination = detectCoordination(txs, internalTxs, addr);
-  const entityCluster = buildEntityCluster(addr, funding, coordination);
-  const behavioralProfile = classifyBehavior(txs, funding, coordination, addr);
 
-  const profileType = behavioralProfile.type || "Individual Whale";
+  const clusterData = buildClusterData(addr, funding, coordination);
+  const classification = classifyEntity(features, txs, funding);
+  const confidenceResult = computeConfidence(features, classification, { total_txs: m.total_txs });
+  const riskProfile = computeRiskProfile(features, classification, {
+    confidence_score: confidenceResult.confidence_score,
+  });
+
+  const entityType = classification.entity_type || "Unknown";
   const summary =
-    `Whale ${addr.slice(0, 10)}…: ${profileType}. ${v || "on-chain"}. ${i.copy_trade_signal}. ` +
-    (analyze?.summary ? analyze.summary.slice(0, 80) + "…" : `${m.total_txs} txs, ${m.unique_counterparties} counterparties; cluster confidence ${entityCluster.confidence}.`);
+    `Whale ${addr.slice(0, 10)}…: ${entityType}. ${v || "on-chain"}. ${i.copy_trade_signal}. ` +
+    (analyze?.summary ? analyze.summary.slice(0, 80) + "…" : `${m.total_txs} txs, ${m.unique_counterparties} counterparties; confidence ${confidenceResult.confidence_score}.`);
 
   const out = {
     address: String(addr ?? ""),
@@ -431,16 +496,31 @@ export async function runWhaleIntelReport(addr, limit = 50) {
     balance_wei: toStringOrNull(balance),
     first_seen_iso: toStringOrNull(m.first_seen_iso),
     last_seen_iso: toStringOrNull(m.last_seen_iso),
+    entity_type: String(entityType),
+    confidence_score: toNumber(confidenceResult.confidence_score),
+    confidence_reasons: Array.isArray(confidenceResult.confidence_reasons) ? confidenceResult.confidence_reasons : [],
+    cluster_data: {
+      cluster_id: clusterData.cluster_id,
+      cluster_size: toNumber(clusterData.cluster_size),
+      related_wallets: Array.isArray(clusterData.related_wallets) ? clusterData.related_wallets : [],
+      cluster_confidence: toNumber(clusterData.cluster_confidence),
+    },
+    risk_profile: {
+      market_impact_risk: { score: toNumber(riskProfile.market_impact_risk?.score), label: String(riskProfile.market_impact_risk?.label ?? "MEDIUM") },
+      counterparty_risk: { score: toNumber(riskProfile.counterparty_risk?.score), label: String(riskProfile.counterparty_risk?.label ?? "MEDIUM") },
+      behavioral_risk: { score: toNumber(riskProfile.behavioral_risk?.score), label: String(riskProfile.behavioral_risk?.label ?? "MEDIUM") },
+    },
+    feature_summary: ensureObject(features),
     entity_cluster: {
-      cluster_id: entityCluster.cluster_id,
-      confidence: toNumber(entityCluster.confidence),
-      connected_wallets: Array.isArray(entityCluster.connected_wallets) ? entityCluster.connected_wallets : [],
-      signals_used: Array.isArray(entityCluster.signals_used) ? entityCluster.signals_used : [],
+      cluster_id: clusterData.cluster_id,
+      confidence: toNumber(clusterData.cluster_confidence),
+      connected_wallets: Array.isArray(clusterData.related_wallets) ? clusterData.related_wallets : [],
+      signals_used: [],
     },
     behavioral_profile: {
-      type: String(behavioralProfile.type ?? "Individual Whale"),
-      confidence: toNumber(behavioralProfile.confidence),
-      reasoning: Array.isArray(behavioralProfile.reasoning) ? behavioralProfile.reasoning : [],
+      type: String(entityType),
+      confidence: toNumber(confidenceResult.confidence_score),
+      reasoning: Array.isArray(confidenceResult.confidence_reasons) ? confidenceResult.confidence_reasons : [],
     },
   };
   if (v != null) out.verdict = String(v);
