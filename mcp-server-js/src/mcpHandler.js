@@ -17,6 +17,7 @@ import {
   runWhaleIntelReport,
   runCompareWhales,
   runWhaleRiskSnapshot,
+  runDetectMevBundles,
 } from "./tools.js";
 
 const transports = {};
@@ -51,6 +52,16 @@ function createToolHandler() {
           const addr = (args?.address ?? "").trim();
           if (!addr || !addr.startsWith("0x")) return errorResult("whale_risk_snapshot", "Invalid address", { address: addr || "" });
           return successResult(await runWhaleRiskSnapshot(addr), name);
+        }
+        case "detect_mev_bundles": {
+          return successResult(
+            await runDetectMevBundles({
+              block_number: args?.block_number,
+              transactions: args?.transactions,
+              min_confidence: args?.min_confidence,
+            }),
+            name
+          );
         }
         default:
           return errorResult("whale_intel_report", `Unknown tool: ${name}`, {});
@@ -122,6 +133,13 @@ function errorResult(toolName, msg, ctx = {}) {
         confidence: 0,
         reasoning: [],
       },
+      entity_fingerprint: {
+        entity_type: "Unknown",
+        confidence_score: 0,
+        supporting_signals: [],
+        entity_cluster_id: null,
+        scores: {},
+      },
     };
   } else if (toolName === "compare_whales") {
     structuredContent = {
@@ -129,6 +147,16 @@ function errorResult(toolName, msg, ctx = {}) {
       ranking: [],
       best_for_copy_trading: null,
       comparison_summary: String(msg),
+    };
+  } else if (toolName === "detect_mev_bundles") {
+    structuredContent = {
+      block_number: null,
+      block_tx_count: 0,
+      bundle_confidence_score: null,
+      bundle_type: null,
+      best_bundle: null,
+      bundles: [],
+      error: String(msg),
     };
   } else {
     structuredContent = {

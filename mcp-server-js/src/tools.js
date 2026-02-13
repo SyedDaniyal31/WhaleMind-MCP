@@ -11,6 +11,8 @@ import { classifyEntity } from "./classificationEngine.js";
 import { computeConfidence } from "./confidenceEngine.js";
 import { buildClusterData } from "./clustering.js";
 import { computeRiskProfile } from "./riskScoring.js";
+import { analyzeBlock } from "./mevBundleDetection/index.js";
+import { fingerprintWallet } from "./entityFingerprinting/index.js";
 
 const ETHERSCAN_BASE = "https://api.etherscan.io/v2/api";
 const WEI_PER_ETH = 1e18;
@@ -103,6 +105,17 @@ export const TOOL_DEFINITIONS = [
           },
           required: ["type", "confidence", "reasoning"],
         },
+        entity_fingerprint: {
+          type: "object",
+          description: "Enrichment: entity tagging from behavioral/interaction signatures",
+          properties: {
+            entity_type: { type: "string" },
+            confidence_score: { type: "number" },
+            supporting_signals: { type: "array", items: { type: "string" } },
+            entity_cluster_id: { type: ["string", "null"] },
+            scores: { type: "object" },
+          },
+        },
       },
       required: [
         "address",
@@ -178,6 +191,37 @@ export const TOOL_DEFINITIONS = [
       required: ["address", "risk_level", "copy_trade_signal", "one_line_rationale", "agent_summary"],
     },
   },
+  {
+    name: "detect_mev_bundles",
+    description:
+      "MEV bundle detection at block level. Heuristic + probabilistic. Pass block_number to fetch block txs (Etherscan) or pass transactions array. Does not affect wallet scoring.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        block_number: { type: "number", description: "Block number to fetch and analyze (uses Etherscan proxy)." },
+        transactions: {
+          type: "array",
+          items: { type: "object" },
+          description: "Optional: pre-fetched block transactions (hash, from, to, value, gasUsed, gasPrice, logs, etc.).",
+        },
+        min_confidence: { type: "number", description: "Min bundle confidence to return (0–1)", default: 0.35 },
+      },
+      required: [],
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        block_number: { type: ["number", "null"] },
+        block_tx_count: { type: "number" },
+        bundle_confidence_score: { type: ["number", "null"] },
+        bundle_type: { type: ["string", "null"], enum: ["sandwich", "arbitrage", "backrun", "liquidation", null] },
+        best_bundle: { type: ["object", "null"] },
+        bundles: { type: "array", items: { type: "object" } },
+        error: { type: ["string", "null"] },
+      },
+      required: ["block_number", "block_tx_count", "bundle_confidence_score", "bundle_type", "best_bundle", "bundles", "error"],
+    },
+  },
 ];
 
 function weiToEth(w) {
@@ -221,6 +265,56 @@ async function fetchTransactions(address, limit = 20) {
     clearTimeout(t);
     if (e?.name !== "AbortError") console.error("[Etherscan]", e?.message || e);
     return [];
+  }
+}
+
+/** Fetch block by number (Etherscan proxy). Returns { number, transactions, baseFeePerGas } or null. */
+async function fetchBlockByNumber(blockNumber) {
+  const hex = typeof blockNumber === "number" ? `0x${blockNumber.toString(16)}` : String(blockNumber);
+  const params = new URLSearchParams({
+    chainid: "1",
+    module: "proxy",
+    action: "eth_getBlockByNumber",
+    tag: hex,
+    boolean: "true",
+    ...(getEtherscanKey() && { apikey: getEtherscanKey() }),
+  });
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ETHERSCAN_BASE}?${params}`, { signal: ctrl.signal });
+    clearTimeout(t);
+    const data = await res.json();
+    if (data?.error) return null;
+    const block = data?.result;
+    if (!block || !Array.isArray(block.transactions)) return null;
+    const txs = block.transactions.map((tx) => {
+      const toEthVal = (v) => (v != null && typeof v === "string" && v.startsWith("0x") ? Number(BigInt(v)) : Number(v) || 0);
+      return {
+        hash: tx.hash ?? tx.transactionHash,
+        transactionHash: tx.hash ?? tx.transactionHash,
+        from: tx.from,
+        to: tx.to,
+        value: tx.value,
+        gas: tx.gas,
+        gasUsed: tx.gasUsed ?? tx.gas,
+        gasPrice: tx.gasPrice,
+        maxFeePerGas: tx.maxFeePerGas,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+        blockNumber: blockNumber ?? (tx.blockNumber != null ? (typeof tx.blockNumber === "string" && tx.blockNumber.startsWith("0x") ? Number(BigInt(tx.blockNumber)) : Number(tx.blockNumber)) : null),
+        timeStamp: block.timestamp != null ? (typeof block.timestamp === "string" && block.timestamp.startsWith("0x") ? Number(BigInt(block.timestamp)) : Number(block.timestamp)) : null,
+        input: tx.input,
+        logs: tx.logs ?? [],
+      };
+    });
+    const baseFee = block.baseFeePerGas != null && typeof block.baseFeePerGas === "string" && block.baseFeePerGas.startsWith("0x")
+      ? Number(BigInt(block.baseFeePerGas)) / 1e9
+      : 30;
+    return { number: blockNumber, transactions: txs, baseFeePerGas: baseFee };
+  } catch (e) {
+    clearTimeout(t);
+    if (e?.name !== "AbortError") console.error("[Etherscan block]", e?.message || e);
+    return null;
   }
 }
 
@@ -429,6 +523,16 @@ export function coerceToOutputSchema(toolName, data) {
         confidence: toNumber(bp.confidence),
         reasoning: Array.isArray(bp.reasoning) ? bp.reasoning.map(String) : [],
       },
+      entity_fingerprint: (() => {
+        const ef = d.entity_fingerprint && typeof d.entity_fingerprint === "object" ? d.entity_fingerprint : {};
+        return {
+          entity_type: String(ef.entity_type ?? "Unknown"),
+          confidence_score: toNumber(ef.confidence_score),
+          supporting_signals: Array.isArray(ef.supporting_signals) ? ef.supporting_signals.map(String) : [],
+          entity_cluster_id: ef.entity_cluster_id != null ? String(ef.entity_cluster_id) : null,
+          scores: ensureObject(ef.scores),
+        };
+      })(),
     };
   }
   if (toolName === "compare_whales") {
@@ -453,7 +557,64 @@ export function coerceToOutputSchema(toolName, data) {
       agent_summary: String(d.agent_summary ?? ""),
     };
   }
+  if (toolName === "detect_mev_bundles") {
+    const best = d.best_bundle && typeof d.best_bundle === "object" ? d.best_bundle : null;
+    return {
+      block_number: d.block_number != null ? toNumber(d.block_number) : null,
+      block_tx_count: toNumber(d.block_tx_count),
+      bundle_confidence_score: d.bundle_confidence_score != null ? toNumber(d.bundle_confidence_score) : null,
+      bundle_type: d.bundle_type != null ? String(d.bundle_type) : null,
+      best_bundle: best,
+      bundles: Array.isArray(d.bundles) ? d.bundles : [],
+      error: d.error != null ? String(d.error) : null,
+    };
+  }
   return d;
+}
+
+export async function runDetectMevBundles(args = {}) {
+  const blockNumber = typeof args.block_number === "number" ? args.block_number : null;
+  const transactions = Array.isArray(args.transactions) ? args.transactions : null;
+  const minConfidence = typeof args.min_confidence === "number" ? args.min_confidence : 0.35;
+  let payload;
+  if (blockNumber != null) {
+    payload = await fetchBlockByNumber(blockNumber);
+    if (!payload) {
+      return {
+        block_number: blockNumber,
+        block_tx_count: 0,
+        bundle_confidence_score: null,
+        bundle_type: null,
+        best_bundle: null,
+        bundles: [],
+        error: "Failed to fetch block or no transactions",
+      };
+    }
+    payload.baseFeePerGas = payload.baseFeePerGas ?? 30;
+  } else if (transactions && transactions.length > 0) {
+    payload = { transactions, number: args.block_number ?? null, baseFeePerGas: 30 };
+  } else {
+    return {
+      block_number: null,
+      block_tx_count: 0,
+      bundle_confidence_score: null,
+      bundle_type: null,
+      best_bundle: null,
+      bundles: [],
+      error: "Provide block_number or transactions array",
+    };
+  }
+  const result = await analyzeBlock(payload, { minConfidence });
+  const best = result.best;
+  return {
+    block_number: result.blockNumber ?? payload.number ?? null,
+    block_tx_count: result.blockTxCount ?? 0,
+    bundle_confidence_score: best?.bundle_confidence_score ?? null,
+    bundle_type: best?.bundle_type ?? null,
+    best_bundle: best ?? null,
+    bundles: result.bundles ?? [],
+    error: null,
+  };
 }
 
 export async function runWhaleIntelReport(addr, limit = 2000) {
@@ -481,6 +642,16 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
   const confidenceResult = computeConfidence(features, classification, { total_txs: m.total_txs });
   const riskProfile = computeRiskProfile(features, classification, {
     confidence_score: confidenceResult.confidence_score,
+  });
+
+  const fingerprint = await fingerprintWallet({
+    features,
+    classification,
+    clusterData,
+    txs,
+    address: addr,
+    coordination,
+    recordToStore: true,
   });
 
   const entityType = classification.entity_type || "Unknown";
@@ -525,6 +696,13 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
       type: String(entityType),
       confidence: toNumber(confidenceResult.confidence_score),
       reasoning: Array.isArray(confidenceResult.confidence_reasons) ? confidenceResult.confidence_reasons : [],
+    },
+    entity_fingerprint: {
+      entity_type: String(fingerprint?.entity_type ?? "Unknown"),
+      confidence_score: toNumber(fingerprint?.confidence_score),
+      supporting_signals: Array.isArray(fingerprint?.supporting_signals) ? fingerprint.supporting_signals : [],
+      entity_cluster_id: fingerprint?.entity_cluster_id != null ? String(fingerprint.entity_cluster_id) : null,
+      scores: ensureObject(fingerprint?.scores),
     },
   };
   if (v != null) out.verdict = String(v);
