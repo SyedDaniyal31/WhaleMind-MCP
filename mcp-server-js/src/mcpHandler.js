@@ -154,6 +154,15 @@ function errorResult(toolName, msg, ctx = {}) {
         sampled: false,
         full_history: false,
       },
+      data_coverage: {
+        total_available_txs: null,
+        fetched_txs: 0,
+        coverage_ratio: 0,
+        coverage_pct: 0,
+        label: "No data",
+        analysis_mode: "full",
+        interpretation_note: null,
+      },
     };
   } else if (toolName === "compare_whales") {
     structuredContent = {

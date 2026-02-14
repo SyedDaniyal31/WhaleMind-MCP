@@ -143,6 +143,20 @@ export const TOOL_DEFINITIONS = [
           },
           required: ["total_fetched", "pages_fetched", "truncated", "sampled", "full_history"],
         },
+        data_coverage: {
+          type: "object",
+          description: "Data coverage: total_available_txs, fetched_txs, coverage_ratio, label, analysis_mode (full | sampled)",
+          properties: {
+            total_available_txs: { type: ["number", "null"] },
+            fetched_txs: { type: "number" },
+            coverage_ratio: { type: "number" },
+            coverage_pct: { type: "number" },
+            label: { type: "string" },
+            analysis_mode: { type: "string", enum: ["full", "sampled"] },
+            interpretation_note: { type: ["string", "null"] },
+          },
+          required: ["total_available_txs", "fetched_txs", "coverage_ratio", "coverage_pct", "label", "analysis_mode"],
+        },
       },
       required: [
         "address",
@@ -161,6 +175,8 @@ export const TOOL_DEFINITIONS = [
         "feature_summary",
         "entity_cluster",
         "behavioral_profile",
+        "tx_fetch_summary",
+        "data_coverage",
       ],
     },
   },
@@ -385,6 +401,7 @@ async function fetchAllTransactions(address, options = {}) {
   let page = 1;
   let truncated = false;
   let sampled = false;
+  let totalAvailableTxs = null;
 
   while (page <= MAX_TX_PAGES) {
     const chunk = await fetchTxListPage(address, page, pageSize);
@@ -404,6 +421,7 @@ async function fetchAllTransactions(address, options = {}) {
     if (n < pageSize) break;
     if (all.length >= maxTransactions) {
       truncated = true;
+      totalAvailableTxs = all.length;
       if (all.length > maxTransactions) all.length = maxTransactions;
       break;
     }
@@ -427,12 +445,14 @@ async function fetchAllTransactions(address, options = {}) {
     }
   }
 
+  const full_history = !truncated && !sampled;
   const fetchSummary = {
     total_fetched: all.length,
     pages_fetched: page,
     truncated,
     sampled,
-    full_history: !truncated && !sampled,
+    full_history,
+    total_available_txs: totalAvailableTxs != null ? totalAvailableTxs : (full_history ? all.length : null),
   };
   return { transactions: all, fetchSummary };
 }
@@ -719,6 +739,18 @@ export function coerceToOutputSchema(toolName, data) {
           full_history: Boolean(tf.full_history),
         };
       })(),
+      data_coverage: (() => {
+        const dc = d.data_coverage && typeof d.data_coverage === "object" ? d.data_coverage : {};
+        return {
+          total_available_txs: dc.total_available_txs != null ? toNumber(dc.total_available_txs) : null,
+          fetched_txs: toNumber(dc.fetched_txs),
+          coverage_ratio: toNumber(dc.coverage_ratio),
+          coverage_pct: toNumber(dc.coverage_pct),
+          label: String(dc.label ?? ""),
+          analysis_mode: dc.analysis_mode === "sampled" ? "sampled" : "full",
+          interpretation_note: dc.interpretation_note != null ? String(dc.interpretation_note) : null,
+        };
+      })(),
     };
   }
   if (toolName === "compare_whales") {
@@ -820,6 +852,24 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
   ]);
   const txs = txFetch.transactions;
   const txFetchSummary = txFetch.fetchSummary;
+  const fetchedTxs = txs.length;
+  const totalAvailableTxs = txFetchSummary.total_available_txs ?? fetchedTxs;
+  const coverageRatio =
+    totalAvailableTxs != null && totalAvailableTxs > 0 ? Math.min(1, fetchedTxs / totalAvailableTxs) : 1;
+  const analysisMode = txFetchSummary.full_history ? "full" : "sampled";
+  const dataCoverageLabel =
+    totalAvailableTxs != null && totalAvailableTxs > fetchedTxs
+      ? `Analyzed ${fetchedTxs.toLocaleString()} of ${totalAvailableTxs.toLocaleString()} transactions (${(coverageRatio * 100).toFixed(1)}% sample)`
+      : analysisMode === "sampled"
+        ? `Analyzed ${fetchedTxs.toLocaleString()} transactions (statistical sample; total unknown)`
+        : `Analyzed ${fetchedTxs.toLocaleString()} transactions (full history)`;
+  const coveragePct =
+    totalAvailableTxs != null && totalAvailableTxs > 0
+      ? Math.round(coverageRatio * 1000) / 10
+      : analysisMode === "full"
+        ? 100
+        : 0;
+
   const m = analyzeTransactions(txs, addr);
   const v = analyze?.verdict;
   const c = analyze?.confidence;
@@ -835,7 +885,11 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
     funding_source_count: Array.isArray(funding?.funders) ? funding.funders.length : 0,
     address: addr,
   });
-  const confidenceResult = computeConfidence(features, classification, { total_txs: m.total_txs });
+  const confidenceResult = computeConfidence(features, classification, {
+    total_txs: m.total_txs,
+    coverage_ratio: coverageRatio,
+    analysis_mode: analysisMode,
+  });
   const riskProfile = computeRiskProfile(features, classification, {
     confidence_score: confidenceResult.confidence_score,
   });
@@ -851,10 +905,9 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
   });
 
   const entityType = classification.entity_type || "Unknown";
-  const fetchNote = txFetchSummary.sampled
-    ? " (sampled)"
-    : txFetchSummary.truncated
-      ? " (truncated at limit)"
+  const fetchNote =
+    analysisMode === "sampled"
+      ? ` (${dataCoverageLabel})`
       : txFetchSummary.full_history
         ? " (full history)"
         : "";
@@ -913,6 +966,18 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
       truncated: txFetchSummary.truncated,
       sampled: txFetchSummary.sampled,
       full_history: txFetchSummary.full_history,
+    },
+    data_coverage: {
+      total_available_txs: totalAvailableTxs,
+      fetched_txs: fetchedTxs,
+      coverage_ratio: coverageRatio,
+      coverage_pct: coveragePct,
+      label: dataCoverageLabel,
+      analysis_mode: analysisMode,
+      interpretation_note:
+        analysisMode === "sampled"
+          ? "Behavioral metrics reflect observed patterns in sampled transactions only (e.g. observed sweep behavior, sample-based intensity). Not absolute claims about full history."
+          : null,
     },
   };
   if (v != null) out.verdict = String(v);

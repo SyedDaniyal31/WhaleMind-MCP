@@ -7,6 +7,8 @@ const CAP_ENTITY_SCORE_THRESHOLD = 0.6;
 const CAP_ENTITY_SCORE_MAX = 0.55;
 const CAP_ENTITY_SCORE_07_THRESHOLD = 0.7;
 const CAP_ENTITY_SCORE_07_MAX = 0.75;
+const CAP_COVERAGE_50_MAX = 0.6;
+const CAP_COVERAGE_30_MAX = 0.5;
 const CAP_TX_COUNT_THRESHOLD = 100;
 const CAP_TX_COUNT_MAX = 0.5;
 const CAP_AGE_DAYS_THRESHOLD = 30;
@@ -62,6 +64,25 @@ export function computeConfidence(features, classification, context = {}) {
 
   let confidence_score =
     data_quality_score * signal_strength * history_depth_factor + signal_count_bonus - contradiction_penalty;
+
+  const coverage_ratio = context.coverage_ratio;
+  const analysis_mode = context.analysis_mode;
+  if (analysis_mode === "sampled") {
+    if (typeof coverage_ratio === "number" && coverage_ratio < 1) {
+      confidence_score *= coverage_ratio;
+      reasons.push("Analysis based on partial history; confidence reduced by coverage");
+      if (coverage_ratio < 0.3) {
+        confidence_score = Math.min(confidence_score, CAP_COVERAGE_30_MAX);
+        reasons.push("Coverage under 30%; confidence capped at 0.5");
+      } else if (coverage_ratio < 0.5) {
+        confidence_score = Math.min(confidence_score, CAP_COVERAGE_50_MAX);
+        reasons.push("Coverage under 50%; confidence capped at 0.6");
+      }
+    } else {
+      reasons.push("Statistical sample; total history unknown; confidence capped");
+      confidence_score = Math.min(confidence_score, CAP_ENTITY_SCORE_07_MAX);
+    }
+  }
 
   if (entityScore < CAP_ENTITY_SCORE_THRESHOLD) {
     confidence_score = Math.min(confidence_score, CAP_ENTITY_SCORE_MAX);
