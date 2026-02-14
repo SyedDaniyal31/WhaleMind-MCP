@@ -14,6 +14,7 @@ import {
 import {
   TOOL_DEFINITIONS,
   coerceToOutputSchema,
+  validateToolInput,
   runWhaleIntelReport,
   runCompareWhales,
   runWhaleRiskSnapshot,
@@ -35,23 +36,29 @@ function createMcpServer() {
 function createToolHandler() {
   return async (request) => {
     const { name, arguments: args } = request.params;
+    const toolName = typeof name === "string" ? name : "whale_intel_report";
+    const safeName = TOOL_DEFINITIONS.some((t) => t.name === toolName) ? toolName : "whale_intel_report";
+
     try {
-      switch (name) {
+      const validation = validateToolInput(toolName, args);
+      if (!validation.valid) {
+        const message = validation.hint ? `${validation.error} ${validation.hint}` : validation.error;
+        return errorResult(safeName, message, { hint: validation.hint });
+      }
+
+      switch (toolName) {
         case "whale_intel_report": {
           const addr = (args?.address ?? "").trim();
-          const limit = typeof args?.limit === "number" ? args.limit : 2000;
-          if (!addr || !addr.startsWith("0x")) return errorResult("whale_intel_report", "Invalid address", { address: addr || "" });
-          return successResult(await runWhaleIntelReport(addr, limit), name);
+          const limit = typeof args?.limit === "number" && args.limit >= 1 && args.limit <= 10000 ? args.limit : 2000;
+          return successResult(await runWhaleIntelReport(addr, limit), toolName);
         }
         case "compare_whales": {
           const addrs = Array.isArray(args?.addresses) ? args.addresses : [];
-          if (addrs.length < 2 || addrs.length > 5) return errorResult("compare_whales", "Need 2 to 5 addresses", {});
-          return successResult(await runCompareWhales(addrs), name);
+          return successResult(await runCompareWhales(addrs), toolName);
         }
         case "whale_risk_snapshot": {
           const addr = (args?.address ?? "").trim();
-          if (!addr || !addr.startsWith("0x")) return errorResult("whale_risk_snapshot", "Invalid address", { address: addr || "" });
-          return successResult(await runWhaleRiskSnapshot(addr), name);
+          return successResult(await runWhaleRiskSnapshot(addr), toolName);
         }
         case "detect_mev_bundles": {
           return successResult(
@@ -60,15 +67,15 @@ function createToolHandler() {
               transactions: args?.transactions,
               min_confidence: args?.min_confidence,
             }),
-            name
+            toolName
           );
         }
         default:
-          return errorResult("whale_intel_report", `Unknown tool: ${name}`, {});
+          return errorResult("whale_intel_report", `Unknown tool: ${toolName}. Valid tools: whale_intel_report, compare_whales, whale_risk_snapshot, detect_mev_bundles.`, {});
       }
     } catch (e) {
-      const msg = e?.name === "AbortError" ? "Request timeout" : (e?.message || String(e));
-      return errorResult(name, msg, { address: args?.address ?? "" });
+      const msg = e?.name === "AbortError" ? "Request timeout; try again or use a smaller limit." : (e?.message || String(e));
+      return errorResult(safeName, msg, { address: args?.address ?? "" });
     }
   };
 }
@@ -140,6 +147,13 @@ function errorResult(toolName, msg, ctx = {}) {
         entity_cluster_id: null,
         scores: {},
       },
+      tx_fetch_summary: {
+        total_fetched: 0,
+        pages_fetched: 0,
+        truncated: false,
+        sampled: false,
+        full_history: false,
+      },
     };
   } else if (toolName === "compare_whales") {
     structuredContent = {
@@ -169,7 +183,7 @@ function errorResult(toolName, msg, ctx = {}) {
   }
   return {
     content: [{ type: "text", text: msg }],
-    structuredContent: ensureObject(structuredContent),
+    structuredContent: coerceToOutputSchema(toolName, structuredContent),
     isError: true,
   };
 }
