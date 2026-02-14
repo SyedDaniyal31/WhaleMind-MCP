@@ -13,6 +13,7 @@ import { buildClusterData } from "./clustering.js";
 import { computeRiskProfile } from "./riskScoring.js";
 import { analyzeBlock } from "./mevBundleDetection/index.js";
 import { fingerprintWallet } from "./entityFingerprinting/index.js";
+import { buildInstitutionalReport } from "./reportFormatting.js";
 
 const ETHERSCAN_BASE = "https://api.etherscan.io/v2/api";
 const WEI_PER_ETH = 1e18;
@@ -157,6 +158,29 @@ export const TOOL_DEFINITIONS = [
           },
           required: ["total_available_txs", "fetched_txs", "coverage_ratio", "coverage_pct", "label", "analysis_mode"],
         },
+        institutional_report: {
+          type: "object",
+          description: "Institutional-grade report: transaction count, data coverage, sampling quality, entity confidence, interpretation",
+          properties: {
+            transaction_count: { type: "string" },
+            data_coverage: { type: "string" },
+            sampling_quality: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] },
+            entity_confidence: { type: "string" },
+            entity_confidence_reasons: { type: "array", items: { type: "string" } },
+            entity_type_display: { type: "string" },
+            provisional_explanation: { type: ["string", "null"] },
+            interpretation: { type: "string" },
+            optional_metrics: {
+              type: ["object", "null"],
+              properties: {
+                behavioral_stability_score: { type: "number" },
+                flow_consistency_metric: { type: "number" },
+                counterparty_entropy_score: { type: "number" },
+              },
+            },
+          },
+          required: ["transaction_count", "data_coverage", "sampling_quality", "entity_confidence", "entity_confidence_reasons", "entity_type_display", "interpretation"],
+        },
       },
       required: [
         "address",
@@ -177,6 +201,7 @@ export const TOOL_DEFINITIONS = [
         "behavioral_profile",
         "tx_fetch_summary",
         "data_coverage",
+        "institutional_report",
       ],
     },
   },
@@ -751,6 +776,27 @@ export function coerceToOutputSchema(toolName, data) {
           interpretation_note: dc.interpretation_note != null ? String(dc.interpretation_note) : null,
         };
       })(),
+      institutional_report: (() => {
+        const ir = d.institutional_report && typeof d.institutional_report === "object" ? d.institutional_report : {};
+        const om = ir.optional_metrics && typeof ir.optional_metrics === "object" ? ir.optional_metrics : null;
+        return {
+          transaction_count: String(ir.transaction_count ?? ""),
+          data_coverage: String(ir.data_coverage ?? ""),
+          sampling_quality: ir.sampling_quality === "HIGH" || ir.sampling_quality === "MEDIUM" ? ir.sampling_quality : "LOW",
+          entity_confidence: String(ir.entity_confidence ?? ""),
+          entity_confidence_reasons: Array.isArray(ir.entity_confidence_reasons) ? ir.entity_confidence_reasons.map(String) : [],
+          entity_type_display: String(ir.entity_type_display ?? "Unknown"),
+          provisional_explanation: ir.provisional_explanation != null ? String(ir.provisional_explanation) : null,
+          interpretation: String(ir.interpretation ?? ""),
+          optional_metrics: om
+            ? {
+                behavioral_stability_score: toNumber(om.behavioral_stability_score),
+                flow_consistency_metric: toNumber(om.flow_consistency_metric),
+                counterparty_entropy_score: toNumber(om.counterparty_entropy_score),
+              }
+            : null,
+        };
+      })(),
     };
   }
   if (toolName === "compare_whales") {
@@ -904,7 +950,19 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
     recordToStore: true,
   });
 
-  const entityType = classification.entity_type || "Unknown";
+  const rawEntityType = classification.entity_type || "Unknown";
+  const institutional = buildInstitutionalReport({
+    totalAvailableTxs,
+    fetchedTxs,
+    coveragePct,
+    analysisMode,
+    entityType: rawEntityType,
+    confidenceScore: confidenceResult.confidence_score,
+    confidenceReasons: confidenceResult.confidence_reasons,
+    features,
+    classification,
+  });
+  const entityType = institutional.entity_type_display;
   const fetchNote =
     analysisMode === "sampled"
       ? ` (${dataCoverageLabel})`
@@ -978,6 +1036,17 @@ export async function runWhaleIntelReport(addr, limit = 2000) {
         analysisMode === "sampled"
           ? "Behavioral metrics reflect observed patterns in sampled transactions only (e.g. observed sweep behavior, sample-based intensity). Not absolute claims about full history."
           : null,
+    },
+    institutional_report: {
+      transaction_count: institutional.transaction_count,
+      data_coverage: institutional.data_coverage,
+      sampling_quality: institutional.sampling_quality,
+      entity_confidence: institutional.entity_confidence,
+      entity_confidence_reasons: institutional.entity_confidence_reasons,
+      entity_type_display: institutional.entity_type_display,
+      provisional_explanation: institutional.provisional_explanation ?? null,
+      interpretation: institutional.interpretation,
+      ...(institutional.optional_metrics && { optional_metrics: institutional.optional_metrics }),
     },
   };
   if (v != null) out.verdict = String(v);

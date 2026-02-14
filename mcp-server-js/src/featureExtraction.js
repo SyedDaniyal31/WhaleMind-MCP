@@ -190,6 +190,22 @@ export function extractFeatures(txs, internalTxs, address) {
     if (smallOut >= outValues.length * 0.5) sweep_pattern_score = Math.round(Math.min(1, outCp / 50) * 1000) / 1000;
   }
 
+  // Optional institutional metrics: behavioral stability, flow consistency, counterparty entropy
+  const meanDailySafe = meanDaily > 0 ? meanDaily : 1;
+  const behavioral_stability_score =
+    Math.round((1 - Math.min(1, tx_frequency_std_dev / meanDailySafe)) * 1000) / 1000;
+  const flow_consistency_metric = Math.round(Math.min(1, inflow_outflow_ratio * 1.2) * 1000) / 1000;
+  let counterparty_entropy_score = 0;
+  if (unique_counterparties > 1 && totalCpTxs > 0) {
+    let entropy = 0;
+    for (const count of counterparties.values()) {
+      const p = count / totalCpTxs;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+    const maxEntropy = Math.log2(unique_counterparties);
+    counterparty_entropy_score = maxEntropy > 0 ? Math.round((entropy / maxEntropy) * 1000) / 1000 : 0;
+  }
+
   const sortedByTime = [...(txs || [])].map((t) => ({ ...t, ts: parseInt(t.timeStamp, 10) })).filter((t) => !Number.isNaN(t.ts)).sort((a, b) => a.ts - b.ts);
   let zeroBalanceSignals = 0;
   for (let i = 1; i < sortedByTime.length; i++) {
@@ -253,6 +269,11 @@ export function extractFeatures(txs, internalTxs, address) {
       burst_activity_score,
       weekly_activity_pattern,
     },
+    optional_metrics: {
+      behavioral_stability_score,
+      flow_consistency_metric,
+      counterparty_entropy_score,
+    },
   };
 }
 
@@ -300,6 +321,11 @@ function emptyFeatureSummary() {
     temporal_metrics: {
       burst_activity_score: 0,
       weekly_activity_pattern: [0, 0, 0, 0, 0, 0, 0],
+    },
+    optional_metrics: {
+      behavioral_stability_score: 0,
+      flow_consistency_metric: 0,
+      counterparty_entropy_score: 0,
     },
   };
 }

@@ -163,6 +163,17 @@ function errorResult(toolName, msg, ctx = {}) {
         analysis_mode: "full",
         interpretation_note: null,
       },
+      institutional_report: {
+        transaction_count: "0 total | 0 analyzed",
+        data_coverage: "No data",
+        sampling_quality: "LOW",
+        entity_confidence: "LOW (0.00)",
+        entity_confidence_reasons: [],
+        entity_type_display: "Unknown",
+        provisional_explanation: null,
+        interpretation: "Insufficient data for classification. Additional transaction history is required.",
+        optional_metrics: null,
+      },
     };
   } else if (toolName === "compare_whales") {
     structuredContent = {
